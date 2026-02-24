@@ -1,2 +1,0 @@
-# Proyecto-X---Laura
-Proves
