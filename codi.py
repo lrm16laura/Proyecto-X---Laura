@@ -1,6 +1,8 @@
 # ============================================================
-# SISTEMA DE CÁLCULO DE FABRICACIÓN — MODO C + AJUSTE + RE-MODO C
-# Estilo visual unificado + Gráficas (Opción B) + Lectura exacta "Capacidad horas"
+# SISTEMA DE CÁLCULO DE FABRICACIÓN — Flujo en 2 fases:
+#   1) Cálculo inicial (Modo C)
+#   2) Reajustar y volver a planificar por porcentajes (Re‑Modo C)
+# Visual: Gráfico único 0184 vs 0833 (Horas)
 # ============================================================
 
 import streamlit as st
@@ -8,7 +10,6 @@ import pandas as pd
 import numpy as np
 import os
 from datetime import datetime, timedelta
-import altair as alt  # Usamos Altair para el pie chart (compatible con Streamlit Cloud)
 
 # ------------------------------------------------------------
 # CONFIGURACIÓN DE PÁGINA
@@ -80,9 +81,7 @@ def norm_code(code):
     - Rellena a 4 dígitos si aplica (ej. 833 -> 0833)
     """
     s = str(code).strip()
-    # Elimina decimales tipo '833.0'
     if s.endswith(".0"): s = s[:-2]
-    # Solo dígitos
     digits = "".join(ch for ch in s if ch.isdigit())
     if digits == "":
         return s
@@ -93,8 +92,8 @@ def norm_code(code):
 def leer_capacidades(df_cap):
     """
     Lee exactamente la columna 'Capacidad horas' por centro.
-    Estructura esperada (según tu Excel):
-      - 'Planta' (no se usa)
+    Estructura esperada:
+      - 'Planta' (opcional)
       - 'Centro'
       - 'Capacidad horas'
     """
@@ -102,7 +101,6 @@ def leer_capacidades(df_cap):
         st.error("❌ No se encuentra la columna 'Centro' en el Excel de capacidad.")
         st.stop()
 
-    # Buscar la columna exacta 'Capacidad horas' (permitimos pequeñas variantes)
     col_nor = {c: c.strip().lower() for c in df_cap.columns}
     cap_col = None
     for col, low in col_nor.items():
@@ -182,7 +180,6 @@ def modo_C(df_agrupado, df_mat, capacidades, DG_code, MCH_code):
     Mantiene Lote_min y Lote_max.
     """
 
-    # Merge tiempos de fabricación
     tiempos = df_mat[[
         "Material", "Unidad",
         "Tiempo fabricación unidad DG",
@@ -232,7 +229,6 @@ def modo_C(df_agrupado, df_mat, capacidades, DG_code, MCH_code):
     contador = 1
     MAX_DIAS = 365
 
-    # Asegurar columnas lote
     if "Lote_min" not in df.columns:
         df["Lote_min"] = df.get("Tamaño lote mínimo", np.nan)
     if "Lote_max" not in df.columns:
@@ -265,7 +261,6 @@ def modo_C(df_agrupado, df_mat, capacidades, DG_code, MCH_code):
             pendiente = ql
             dias = 0
 
-            # Si la capacidad base del centro es 0, programar todo en fecha mínima
             if capacidades.get(str(centro), 0) <= 0:
                 out.append({
                     "Nº de propuesta": contador,
@@ -287,7 +282,6 @@ def modo_C(df_agrupado, df_mat, capacidades, DG_code, MCH_code):
                 horas_nec = tiempo_necesario(centro, pendiente, r)
 
                 if cap_dia >= horas_nec:
-                    # Cabe entero hoy
                     consume(centro, fecha, horas_nec)
                     out.append({
                         "Nº de propuesta": contador,
@@ -305,7 +299,6 @@ def modo_C(df_agrupado, df_mat, capacidades, DG_code, MCH_code):
                     pendiente = 0
                     break
 
-                # Producir lo que permita la capacidad del día
                 q_posible = cantidad_por_capacidad(centro, cap_dia, r)
                 if q_posible > 0:
                     h_prod = tiempo_necesario(centro, q_posible, r)
@@ -329,7 +322,6 @@ def modo_C(df_agrupado, df_mat, capacidades, DG_code, MCH_code):
                     break
 
                 if dias >= MAX_DIAS:
-                    # Forzar cierre
                     out.append({
                         "Nº de propuesta": contador,
                         "Material": r["Material"],
@@ -346,7 +338,6 @@ def modo_C(df_agrupado, df_mat, capacidades, DG_code, MCH_code):
                     pendiente = 0
                     break
 
-                # Mover SOLO al día siguiente, MISMO centro
                 fecha = (fecha + timedelta(days=1)).normalize()
                 semana = fecha.strftime("%Y-W%U")
                 dias += 1
@@ -354,14 +345,16 @@ def modo_C(df_agrupado, df_mat, capacidades, DG_code, MCH_code):
     return pd.DataFrame(out)
 
 # ------------------------------------------------------------
-# EJECUCIÓN END-TO-END: Modo C → Ajuste → Re-Modo C
+# EJECUCIÓN — Separada en 2 fases
+#   A) Modo C inicial
+#   B) Reajuste + Re‑Modo C
 # ------------------------------------------------------------
-def ejecutar_calculo(df_cap, df_mat, df_cli, df_dem, ajustes):
-    # 1) Capacidades exactas desde Excel
+def ejecutar_modoC_base(df_cap, df_mat, df_cli, df_dem):
+    # 1) Capacidades exactas
     capacidades = leer_capacidades(df_cap)
-    DG_code, MCH_code, centros = detectar_centros_desde_capacidades(capacidades)
+    DG_code, MCH_code, _ = detectar_centros_desde_capacidades(capacidades)
 
-    # 2) Normalización fechas y semana
+    # 2) Normalizar fechas y semana en demanda
     df_dem = df_dem.copy()
     df_dem["Fecha_DT"] = pd.to_datetime(df_dem["Fecha de necesidad"])
     df_dem["Semana_Label"] = df_dem["Fecha_DT"].dt.strftime("%Y-W%U")
@@ -370,7 +363,7 @@ def ejecutar_calculo(df_cap, df_mat, df_cli, df_dem, ajustes):
     df = df_dem.merge(df_mat, on=["Material", "Unidad"], how="left")
     df = df.merge(df_cli, on="Cliente", how="left")
 
-    # 4) Decisión por coste real (DG vs MCH), con exclusividades
+    # 4) Decidir centro por costes (respetando exclusividades)
     col_excl_dg = next((c for c in df.columns if str(c).strip().lower() in ["exclusico dg","exclusivo dg"]), None)
     col_excl_mch = next((c for c in df.columns if str(c).strip().lower() in ["exclusivo mch","exclusivo mch."]), None)
 
@@ -380,19 +373,17 @@ def ejecutar_calculo(df_cap, df_mat, df_cli, df_dem, ajustes):
     COL_CU_MCH = next((c for c in df.columns if "coste unit" in str(c).lower() and "mch" in str(c).lower()), "Coste unitario MCH")
 
     def decidir_centro(r):
-        # Exclusividades
         if col_excl_dg and str(r.get(col_excl_dg, "")).strip().upper() == "X":
             return DG_code
         if col_excl_mch and str(r.get(col_excl_mch, "")).strip().upper() == "X":
             return MCH_code
-
         c1 = to_float_safe(r.get(COL_COST_DG, 0)) + to_float_safe(r.get("Cantidad", 0)) * to_float_safe(r.get(COL_CU_DG, 0))
         c2 = to_float_safe(r.get(COL_COST_MCH, 0)) + to_float_safe(r.get("Cantidad", 0)) * to_float_safe(r.get(COL_CU_MCH, 0))
         return DG_code if c1 < c2 else MCH_code
 
     df["Centro_Base"] = df.apply(decidir_centro, axis=1)
 
-    # 5) Agrupar demanda
+    # 5) Agrupar para Modo C
     g = df.groupby(
         ["Material", "Unidad", "Centro_Base", "Fecha de necesidad", "Semana_Label"], dropna=False
     ).agg({
@@ -418,7 +409,7 @@ def ejecutar_calculo(df_cap, df_mat, df_cli, df_dem, ajustes):
         DG_code=DG_code, MCH_code=MCH_code
     )
 
-    # 7) Horas para reparto
+    # 7) Calcular Horas (para métricas y gráfico)
     tiempos = df_mat[["Material","Unidad","Tiempo fabricación unidad DG","Tiempo fabricación unidad MCH"]].drop_duplicates()
     df_c = df_c.merge(tiempos, on=["Material","Unidad"], how="left")
     df_c["Horas"] = np.where(
@@ -427,24 +418,33 @@ def ejecutar_calculo(df_cap, df_mat, df_cli, df_dem, ajustes):
         df_c["Cantidad a fabricar"] * df_c["Tiempo fabricación unidad MCH"]
     )
 
-    # 8) REPARTO PROPORCIONAL POR SEMANA
+    return df_c, capacidades, DG_code, MCH_code
+
+def replanificar_con_porcentajes(df_base, df_mat, capacidades, DG_code, MCH_code, ajustes):
+    """
+    A partir del resultado base (df_base con Horas y Semana),
+    reparte por semana según 'ajustes' y re-ejecuta Modo C.
+    """
+    # 1) Reparto por semana (en HORAS)
     df_repartido = []
-    for sem in sorted(df_c["Semana"].dropna().unique().tolist()):
-        df_sem = df_c[df_c["Semana"] == sem].copy()
-        pct = ajustes.get(sem, 50)
+    for sem in sorted(df_base["Semana"].dropna().unique().tolist()):
+        df_sem = df_base[df_base["Semana"] == sem].copy()
         if df_sem.empty:
             continue
+        pct = ajustes.get(sem, 50)
         df_sem = repartir_porcentaje(df_sem, pct, DG_code, MCH_code)
         df_repartido.append(df_sem)
-    df_adj = pd.concat(df_repartido, ignore_index=True) if df_repartido else df_c.copy()
 
-    # 9) RE-MODO C COMPLETO
+    df_adj = pd.concat(df_repartido, ignore_index=True) if df_repartido else df_base.copy()
+
+    # 2) Re‑Modo C
     df_adj_pre = df_adj.rename(columns={"Cantidad a fabricar":"Cantidad"})[
         ["Material","Unidad","Centro","Cantidad","Fecha","Semana","Lote_min","Lote_max"]
     ]
     df_final = modo_C(df_adj_pre, df_mat, capacidades, DG_code, MCH_code)
 
-    # 10) Horas finales (para métricas y gráficos)
+    # 3) Recalcular Horas
+    tiempos = df_mat[["Material","Unidad","Tiempo fabricación unidad DG","Tiempo fabricación unidad MCH"]].drop_duplicates()
     df_final = df_final.merge(tiempos, on=["Material","Unidad"], how="left")
     df_final["Horas"] = np.where(
         df_final["Centro"].astype(str) == str(DG_code),
@@ -452,19 +452,16 @@ def ejecutar_calculo(df_cap, df_mat, df_cli, df_dem, ajustes):
         df_final["Cantidad a fabricar"] * df_final["Tiempo fabricación unidad MCH"]
     )
 
-    return df_final, capacidades, DG_code, MCH_code
+    return df_final
 
 # ------------------------------------------------------------
 # INTERFAZ
 # ------------------------------------------------------------
 st.markdown("<h1>📊 Sistema de Cálculo de Fabricación</h1>", unsafe_allow_html=True)
-st.markdown("Carga los 4 archivos Excel necesarios, ajusta los porcentajes por semana y ejecuta Modo C → Reparto → Re‑Modo C.")
+st.markdown("Carga los 4 archivos Excel. Primero ejecuta el cálculo inicial (Modo C). Después podrás **reajustar y re‑planificar por semana** con porcentajes.")
 st.markdown("---")
 
-tab1, tab2 = st.tabs(["📥 Carga de Archivos", "⚙️ Ajuste y Ejecución"])
-
-# Variables de estado
-df_cap = df_mat = df_cli = df_dem = None
+tab1, tab2 = st.tabs(["📥 Carga de Archivos", "⚙️ Cálculo y Reajuste"])
 
 # =========================
 # TAB 1 — CARGA
@@ -473,8 +470,6 @@ with tab1:
     st.subheader("📁 Carga tus archivos Excel")
 
     col1, col2 = st.columns(2)
-
-    # Capacidad
     with col1:
         st.markdown('<div class="section-container">', unsafe_allow_html=True)
         st.markdown("### 🏭 Capacidad de planta")
@@ -482,6 +477,7 @@ with tab1:
         if f1:
             try:
                 df_cap = pd.read_excel(f1)
+                st.session_state.df_cap = df_cap.copy()
                 guardar_archivo(f1, "capacidad_planta")
                 st.success("✅ Cargado")
                 st.dataframe(df_cap, use_container_width=True, height=150)
@@ -492,7 +488,6 @@ with tab1:
             st.info("Esperando archivo…")
         st.markdown('</div>', unsafe_allow_html=True)
 
-    # Materiales
     with col2:
         st.markdown('<div class="section-container">', unsafe_allow_html=True)
         st.markdown("### 📦 Maestro de materiales")
@@ -500,6 +495,7 @@ with tab1:
         if f2:
             try:
                 df_mat = pd.read_excel(f2)
+                st.session_state.df_mat = df_mat.copy()
                 guardar_archivo(f2, "maestro_materiales")
                 st.success("✅ Cargado")
                 st.dataframe(df_mat, use_container_width=True, height=400)
@@ -510,8 +506,6 @@ with tab1:
         st.markdown('</div>', unsafe_allow_html=True)
 
     col3, col4 = st.columns(2)
-
-    # Clientes
     with col3:
         st.markdown('<div class="section-container">', unsafe_allow_html=True)
         st.markdown("### 👥 Maestro de clientes")
@@ -519,6 +513,7 @@ with tab1:
         if f3:
             try:
                 df_cli = pd.read_excel(f3)
+                st.session_state.df_cli = df_cli.copy()
                 guardar_archivo(f3, "maestro_clientes")
                 st.success("✅ Cargado")
                 st.dataframe(df_cli, use_container_width=True, height=400)
@@ -528,7 +523,6 @@ with tab1:
             st.info("Esperando archivo…")
         st.markdown('</div>', unsafe_allow_html=True)
 
-    # Demanda
     with col4:
         st.markdown('<div class="section-container">', unsafe_allow_html=True)
         st.markdown("### 📈 Demanda")
@@ -536,6 +530,7 @@ with tab1:
         if f4:
             try:
                 df_dem = pd.read_excel(f4)
+                st.session_state.df_dem = df_dem.copy()
                 guardar_archivo(f4, "demanda")
                 st.success("✅ Cargado")
                 st.dataframe(df_dem, use_container_width=True, height=400)
@@ -546,146 +541,156 @@ with tab1:
         st.markdown('</div>', unsafe_allow_html=True)
 
 # =========================
-# TAB 2 — EJECUCIÓN
+# TAB 2 — EJECUCIÓN y REAJUSTE
 # =========================
 with tab2:
+    # Recuperar de session_state si existen
+    df_cap = st.session_state.get("df_cap", None)
+    df_mat = st.session_state.get("df_mat", None)
+    df_cli = st.session_state.get("df_cli", None)
+    df_dem = st.session_state.get("df_dem", None)
+
     if any(x is None for x in [df_cap, df_mat, df_cli, df_dem]):
-        st.warning("⚠️ Por favor, carga los 4 archivos en la pestaña anterior para habilitar los ajustes.")
+        st.warning("⚠️ Por favor, carga los 4 archivos en la pestaña anterior para habilitar el cálculo.")
         st.stop()
 
     # Limpieza de columnas
     for d in [df_cap, df_mat, df_cli, df_dem]:
         d.columns = d.columns.str.strip()
 
-    # Semanas disponibles
-    df_dem["Semana_Label"] = pd.to_datetime(df_dem["Fecha de necesidad"]).dt.strftime("%Y-W%U")
-    lista_semanas = sorted(df_dem["Semana_Label"].dropna().unique())
+    st.subheader("🚀 Cálculo inicial (Modo C)")
 
-    # Sliders en grid (4 columnas)
-    st.subheader("⚙️ Configuración de Porcentajes por Semana (0% = MCH · 100% = DG)")
-    ajustes = {}
-    cols_sliders = st.columns(4)
-    for i, sem in enumerate(lista_semanas):
-        with cols_sliders[i % 4]:
-            ajustes[sem] = st.slider(f"Sem {sem}", 0, 100, 50)
+    if st.button("Ejecutar cálculo inicial", use_container_width=True):
+        with st.spinner("Calculando Modo C (inicial)…"):
+            df_base, capacidades, DG, MCH = ejecutar_modoC_base(df_cap, df_mat, df_cli, df_dem)
 
-    st.markdown("---")
+        # Guardar en sesión para permitir el reajuste posterior
+        st.session_state.calculo_realizado = True
+        st.session_state.df_base = df_base
+        st.session_state.capacidades = capacidades
+        st.session_state.DG = DG
+        st.session_state.MCH = MCH
+        st.success("✅ Cálculo inicial completado.")
 
-    if st.button("🚀 EJECUTAR CÁLCULO DE PROPUESTA", use_container_width=True):
-        with st.spinner("Calculando Modo C → Reparto → Re‑Modo C…"):
-            df_res, capacidades, DG, MCH = ejecutar_calculo(df_cap, df_mat, df_cli, df_dem, ajustes)
+    # Mostrar resultados del cálculo inicial (si ya existe en sesión)
+    if st.session_state.get("calculo_realizado", False):
+        df_base = st.session_state.df_base
+        capacidades = st.session_state.capacidades
+        DG = st.session_state.DG
+        MCH = st.session_state.MCH
 
-        st.success("✅ Cálculo completado con éxito.")
-
-        # =========================
-        # Mostrar capacidades leídas
-        # =========================
-        st.markdown("**Capacidades leídas del Excel (h/día):**")
-        st.write({k: f"{v:.1f}" for k, v in capacidades.items()})
-
-        # =========================
-        # MÉTRICAS
-        # =========================
-        total_props = len(df_res)
-        horas_por_centro = df_res.groupby("Centro")["Horas"].sum().to_dict()
-
-        # Capacidad base y días planificados (para saturación)
-        df_res["_FechaDT"] = pd.to_datetime(df_res["Fecha"], format="%d.%m.%Y", errors="coerce")
-        dias_por_centro = df_res.groupby("Centro")["_FechaDT"].nunique().to_dict()
-        cap_total_disp = {c: capacidades.get(c, 0) * dias_por_centro.get(c, 0) for c in capacidades.keys()}
-        sat_pct = {
-            c: (horas_por_centro.get(c, 0) / cap_total_disp.get(c, 1) * 100) if cap_total_disp.get(c, 0) > 0 else 0
-            for c in capacidades.keys()
-        }
-
+        # Métricas básicas
+        total_props = len(df_base)
+        horas_por_centro = df_base.groupby("Centro")["Horas"].sum().to_dict()
         m = st.columns(3)
-        m[0].metric("Total Propuestas", f"{total_props:,}".replace(",", "."))
-        # Mostrar dos primeros centros (típicamente DG/MCH)
-        centros_orden = list(capacidades.keys())
-        if len(centros_orden) >= 1:
-            c0 = centros_orden[0]
-            m[1].metric(f"Horas Totales {c0}", f"{horas_por_centro.get(c0, 0):,.1f}h".replace(",", "."),
-                        help=f"Saturación: {sat_pct.get(c0, 0):.1f}%")
-        if len(centros_orden) >= 2:
-            c1 = centros_orden[1]
-            m[2].metric(f"Horas Totales {c1}", f"{horas_por_centro.get(c1, 0):,.1f}h".replace(",", "."),
-                        help=f"Saturación: {sat_pct.get(c1, 0):.1f}%")
-
-        # =========================
-        # GRÁFICAS — OPCIÓN B
-        # =========================
-        st.subheader("📊 Gráficas de Carga y Capacidad")
-
-        # ---- 1) Carga por día y centro (barras) ----
-        st.markdown("**Carga diaria por centro (Horas)**")
-        df_day = df_res.copy()
-        carga_por_dia = df_day.groupby(["_FechaDT","Centro"])["Horas"].sum().unstack().fillna(0).sort_index()
-        st.bar_chart(carga_por_dia, use_container_width=True)
-
-        # ---- 2) Carga por material (Top 20) ----
-        st.markdown("**Carga total por material (Top 20)**")
-        topN = 20
-        carga_material = df_res.groupby("Material")["Horas"].sum().sort_values(ascending=False).head(topN)
-        st.bar_chart(carga_material.to_frame(name="Horas"), use_container_width=True)
-
-        # ---- 3) Distribución por centro (%) — Pie con Altair (idéntico visual) ----
-        st.markdown("**Distribución por centro (%)**")
-        pie_data = df_res.groupby("Centro")["Horas"].sum().reset_index()
-        if pie_data["Horas"].sum() > 0:
-            pie_data["Porcentaje"] = pie_data["Horas"] / pie_data["Horas"].sum()
-            chart = alt.Chart(pie_data).mark_arc().encode(
-                theta=alt.Theta(field="Porcentaje", type="quantitative"),
-                color=alt.Color("Centro:N"),
-                tooltip=["Centro", alt.Tooltip("Horas:Q", format=".1f"), alt.Tooltip("Porcentaje:Q", format=".1%")]
-            ).properties(width=350, height=350)
-            st.altair_chart(chart, use_container_width=False)
-        else:
-            st.info("Sin datos para mostrar la distribución.")
-
-        # ---- 4) Capacidad usada vs disponible (por centro) ----
-        st.markdown("**Capacidad usada vs. disponible (por centro)**")
-        cols_cap = st.columns(max(1, len(capacidades)))
-        for idx, c in enumerate(capacidades):
-            with cols_cap[idx]:
-                df_centro = df_day[df_day["Centro"] == c].copy()
-                serie_usado = df_centro.groupby("_FechaDT")["Horas"].sum().rename("Usado").sort_index()
-                if not serie_usado.index.empty:
-                    serie_cap = pd.Series(capacidades.get(c, 0.0), index=serie_usado.index, name="Capacidad")
-                else:
-                    # En caso extremo sin fechas, crear índice vacío
-                    serie_cap = pd.Series(dtype=float, name="Capacidad")
-                df_uc = pd.concat([serie_usado, serie_cap], axis=1).fillna(0.0)
-
-                st.markdown(f"**{c}** — Capacidad base: **{capacidades.get(c, 0):,.1f} h/día**".replace(",", "."))
-                st.line_chart(df_uc, use_container_width=True)
-                st.caption(f"Saturación global: {sat_pct.get(c, 0):.1f}%")
+        m[0].metric("Total Propuestas (inicial)", f"{total_props:,}".replace(",", "."))
+        m[1].metric(f"Horas totales {DG}", f"{horas_por_centro.get(DG, 0):,.1f}h".replace(",", "."))
+        m[2].metric(f"Horas totales {MCH}", f"{horas_por_centro.get(MCH, 0):,.1f}h".replace(",", "."))
 
         st.markdown("---")
+        st.subheader("📊 Único gráfico — Producción por centro (Horas)")
 
-        # =========================
-        # TABLA Y EXPORTACIÓN
-        # =========================
-        st.subheader("📋 Detalle de la Propuesta")
+        # ==== GRÁFICO ÚNICO: solo 0184 vs 0833 (en HORAS) ====
+        # Tomamos explícitamente los centros detectados DG (sufijo 833) y MCH (sufijo 184)
+        resumen = pd.Series({
+            str(MCH): float(horas_por_centro.get(MCH, 0.0)),
+            str(DG): float(horas_por_centro.get(DG, 0.0))
+        }, name="Horas").to_frame()
+        st.bar_chart(resumen, use_container_width=True)
+
+        st.caption("El gráfico muestra horas totales planificadas por centro (inicial).")
+
+        st.markdown("---")
+        st.subheader("📋 Detalle de la Propuesta (inicial)")
         cols_to_show = ["Nº de propuesta","Material","Centro","Clase de orden",
                         "Cantidad a fabricar","Unidad","Fecha","Semana",
                         "Lote_min","Lote_max"]
-        cols_presentes = [c for c in cols_to_show if c in df_res.columns]
-        st.dataframe(df_res[cols_presentes], use_container_width=True, height=420)
+        cols_presentes = [c for c in cols_to_show if c in df_base.columns]
+        st.dataframe(df_base[cols_presentes], use_container_width=True, height=420)
 
-        output_path = os.path.join(UPLOAD_DIR, f"Propuesta_Final_{datetime.now().strftime('%Y%m%d')}.xlsx")
-        df_res[cols_presentes].to_excel(output_path, index=False)
-        with open(output_path, "rb") as f:
+        output_path_base = os.path.join(UPLOAD_DIR, f"Propuesta_Inicial_{datetime.now().strftime('%Y%m%d')}.xlsx")
+        df_base[cols_presentes].to_excel(output_path_base, index=False)
+        with open(output_path_base, "rb") as f:
             st.download_button(
-                "📥 Descargar Propuesta en Excel",
+                "📥 Descargar Propuesta Inicial (Excel)",
                 data=f,
-                file_name=f"Propuesta_Fabricacion_{datetime.now().strftime('%Y%m%d')}.xlsx"
+                file_name=f"Propuesta_Inicial_{datetime.now().strftime('%Y%m%d')}.xlsx"
             )
+
+        st.markdown("---")
+        st.subheader("🔁 ¿Quieres reajustar por semana y re‑planificar?")
+
+        # Botón que habilita los sliders de porcentajes por semana
+        if st.button("Reajustar y re‑planificar por semana", use_container_width=True):
+            st.session_state.mostrar_reajuste = True
+
+        if st.session_state.get("mostrar_reajuste", False):
+            # Sliders por semana (a partir de df_base)
+            lista_semanas = sorted(df_base["Semana"].dropna().unique())
+            st.markdown("**Configura los porcentajes por semana (0% = MCH · 100% = DG)**")
+            ajustes = {}
+            cols_sliders = st.columns(4)
+            for i, sem in enumerate(lista_semanas):
+                with cols_sliders[i % 4]:
+                    ajustes[sem] = st.slider(f"Sem {sem}", 0, 100, 50, key=f"slider_{sem}")
+
+            st.info("Pulsa **Aplicar porcentajes** para re‑planificar (Re‑Modo C).")
+            if st.button("Aplicar porcentajes y re‑planificar", use_container_width=True):
+                with st.spinner("Aplicando reparto y re‑planificando…"):
+                    df_final = replanificar_con_porcentajes(
+                        df_base=st.session_state.df_base,
+                        df_mat=st.session_state.df_mat,
+                        capacidades=st.session_state.capacidades,
+                        DG_code=st.session_state.DG,
+                        MCH_code=st.session_state.MCH,
+                        ajustes=ajustes
+                    )
+
+                st.session_state.df_final_reajuste = df_final
+                st.success("✅ Re‑planificación completada.")
+
+        # Mostrar resultados del reajuste si existen
+        if st.session_state.get("df_final_reajuste", None) is not None:
+            df_final = st.session_state.df_final_reajuste
+
+            # Métricas actualizadas
+            st.markdown("---")
+            st.subheader("📈 Resultados tras Re‑planificación")
+            horas_por_centro_final = df_final.groupby("Centro")["Horas"].sum().to_dict()
+            m2 = st.columns(3)
+            m2[0].metric("Total Propuestas (reajuste)", f"{len(df_final):,}".replace(",", "."))
+            m2[1].metric(f"Horas totales {DG}", f"{horas_por_centro_final.get(DG, 0):,.1f}h".replace(",", "."))
+            m2[2].metric(f"Horas totales {MCH}", f"{horas_por_centro_final.get(MCH, 0):,.1f}h".replace(",", "."))
+
+            # Gráfico único actualizado
+            st.markdown("**Gráfico (actualizado)** — Producción por centro (Horas):")
+            resumen_final = pd.Series({
+                str(MCH): float(horas_por_centro_final.get(MCH, 0.0)),
+                str(DG): float(horas_por_centro_final.get(DG, 0.0))
+            }, name="Horas").to_frame()
+            st.bar_chart(resumen_final, use_container_width=True)
+
+            st.subheader("📋 Detalle de la Propuesta (reajustada)")
+            cols_to_show = ["Nº de propuesta","Material","Centro","Clase de orden",
+                            "Cantidad a fabricar","Unidad","Fecha","Semana",
+                            "Lote_min","Lote_max"]
+            cols_presentes = [c for c in cols_to_show if c in df_final.columns]
+            st.dataframe(df_final[cols_presentes], use_container_width=True, height=420)
+
+            output_path_final = os.path.join(UPLOAD_DIR, f"Propuesta_Replan_{datetime.now().strftime('%Y%m%d')}.xlsx")
+            df_final[cols_presentes].to_excel(output_path_final, index=False)
+            with open(output_path_final, "rb") as f:
+                st.download_button(
+                    "📥 Descargar Propuesta Re‑planificada (Excel)",
+                    data=f,
+                    file_name=f"Propuesta_Replan_{datetime.now().strftime('%Y%m%d')}.xlsx"
+                )
 
 # Footer
 st.markdown("---")
 st.markdown("""
 <div class="footer">
-    <p>✨ <strong>Sistema de Cálculo de Fabricación</strong> — Interfaz Unificada</p>
-    <p>Modo C + Reparto Proporcional + Re‑Modo C | Fechas dd.MM.yyyy | Capacidades desde “Capacidad horas”</p>
+    <p>✨ <strong>Sistema de Cálculo de Fabricación</strong> — Flujo en 2 fases</p>
+    <p>Modo C inicial → Reparto por semana → Re‑Modo C | Fechas dd.MM.yyyy | Capacidades desde “Capacidad horas”</p>
 </div>
 """, unsafe_allow_html=True)
