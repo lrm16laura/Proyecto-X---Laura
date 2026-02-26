@@ -592,63 +592,64 @@ with tab2:
 
         st.success("✅ Cálculo inicial completado con éxito.")
 
-   # -----------------------------
-# Mostrar resultados del cálculo inicial
-# -----------------------------
-if st.session_state.get("calculo_realizado", False):
-    df_base = st.session_state.df_base
-    capacidades = st.session_state.capacidades
-    DG = st.session_state.DG
-    MCH = st.session_state.MCH
+    # -----------------------------
+    # Mostrar resultados del cálculo inicial
+    # -----------------------------
+    if st.session_state.get("calculo_realizado", False):
+        df_base = st.session_state.df_base
+        capacidades = st.session_state.capacidades
+        DG = st.session_state.DG
+        MCH = st.session_state.MCH
 
-    # Capacidades leídas
-    st.markdown("**Capacidades leídas del Excel (h/día):**")
-    st.write({k: f"{v:.1f}" for k, v in capacidades.items()})
+        # Capacidades leídas
+        st.markdown("**Capacidades leídas del Excel (h/día):**")
+        st.write({k: f"{v:.1f}" for k, v in capacidades.items()})
 
-    # Métricas (opcionales y ligeras)
-    total_props = len(df_base)
-    horas_por_centro = df_base.groupby("Centro")["Horas"].sum().to_dict()
+        # Métricas (opcionales y ligeras)
+        total_props = len(df_base)
+        horas_por_centro = df_base.groupby("Centro")["Horas"].sum().to_dict()
 
-    m = st.columns(3)
-    m[0].metric("Total Propuestas (inicial)", f"{total_props:,}".replace(",", "."))
-    m[1].metric(f"Horas totales {DG}", f"{horas_por_centro.get(DG, 0):,.1f}h".replace(",", "."))
-    m[2].metric(f"Horas totales {MCH}", f"{horas_por_centro.get(MCH, 0):,.1f}h".replace(",", "."))
+        m = st.columns(3)
+        m[0].metric("Total Propuestas (inicial)", f"{total_props:,}".replace(",", "."))
+        m[1].metric(f"Horas totales {DG}", f"{horas_por_centro.get(DG, 0):,.1f}h".replace(",", "."))
+        m[2].metric(f"Horas totales {MCH}", f"{horas_por_centro.get(MCH, 0):,.1f}h".replace(",", "."))
 
-    # === ÚNICO GRÁFICO: Producción por centro (Horas) — Solo 0184 vs 0833 ===
-    st.subheader("📊 Producción por centro (Horas) — Solo 0184 vs 0833")
-    resumen_ini = pd.Series({
-        str(MCH): float(horas_por_centro.get(MCH, 0.0)),
-        str(DG): float(horas_por_centro.get(DG, 0.0))
-    }, name="Horas").to_frame()
-    st.bar_chart(resumen_ini, use_container_width=True)
+        # === ÚNICO GRÁFICO: Producción por centro (Horas) — Solo 0184 vs 0833 ===
+        st.subheader("📊 Producción por centro (Horas) — Solo 0184 vs 0833")
+        resumen_ini = pd.Series({
+            str(MCH): float(horas_por_centro.get(MCH, 0.0)),
+            str(DG): float(horas_por_centro.get(DG, 0.0))
+        }, name="Horas").to_frame()
+        st.bar_chart(resumen_ini, use_container_width=True)
 
-    st.markdown("---")
-    st.subheader("📋 Detalle de la Propuesta (inicial)")
-    cols_to_show = ["Nº de propuesta","Material","Centro","Clase de orden",
-                    "Cantidad a fabricar","Unidad","Fecha","Semana",
-                    "Lote_min","Lote_max"]
-    cols_presentes = [c for c in cols_to_show if c in df_base.columns]
-    st.dataframe(df_base[cols_presentes], use_container_width=True, height=420)
+        st.markdown("---")
+        st.subheader("📋 Detalle de la Propuesta (inicial)")
+        cols_to_show = ["Nº de propuesta","Material","Centro","Clase de orden",
+                        "Cantidad a fabricar","Unidad","Fecha","Semana",
+                        "Lote_min","Lote_max"]
+        cols_presentes = [c for c in cols_to_show if c in df_base.columns]
+        st.dataframe(df_base[cols_presentes], use_container_width=True, height=420)
 
-    # Descargar resultado inicial
-    output_path_base = os.path.join(UPLOAD_DIR, f"Propuesta_Inicial_{datetime.now().strftime('%Y%m%d')}.xlsx")
-    try:
-        df_base[cols_presentes].to_excel(output_path_base, index=False)
-        with open(output_path_base, "rb") as f:
-            st.download_button(
-                "📥 Descargar Propuesta Inicial (Excel)",
-                data=f,
-                file_name=f"Propuesta_Inicial_{datetime.now().strftime('%Y%m%d')}.xlsx"
-            )
-    except Exception as e:
-        st.info(f"No se pudo generar el Excel inicial: {e}")
+        # Descargar resultado inicial
+        output_path_base = os.path.join(UPLOAD_DIR, f"Propuesta_Inicial_{datetime.now().strftime('%Y%m%d')}.xlsx")
+        try:
+            df_base[cols_presentes].to_excel(output_path_base, index=False)
+            with open(output_path_base, "rb") as f:
+                st.download_button(
+                    "📥 Descargar Propuesta Inicial (Excel)",
+                    data=f,
+                    file_name=f"Propuesta_Inicial_{datetime.now().strftime('%Y%m%d')}.xlsx"
+                )
+        except Exception as e:
+            st.info(f"No se pudo generar el Excel inicial: {e}")
 
-    st.markdown("---")
-    st.subheader("🔁 ¿Quieres reajustar por semana y re‑planificar?")
+        st.markdown("---")
+        st.subheader("🔁 ¿Quieres reajustar por semana y re‑planificar?")
 
-    # Botón que habilita los sliders por semana
-    if st.button("Reajustar y volver a planificar por semana", use_container_width=True):
-        st.session_state.mostrar_reajuste = True
+        # Botón que habilita los sliders por semana
+        if st.button("Reajustar y volver a planificar por semana", use_container_width=True):
+            st.session_state.mostrar_reajuste = True
+
         # -----------------------------
         # UI — Sliders de reajuste + Re‑Modo C
         # -----------------------------
@@ -725,4 +726,3 @@ st.markdown("""
     <p>Modo C + Reparto Proporcional + Re‑Modo C | Fechas dd.MM.yyyy | Capacidades desde “Capacidad horas”</p>
 </div>
 """, unsafe_allow_html=True)
-        
