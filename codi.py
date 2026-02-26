@@ -56,140 +56,162 @@ def guardar_archivo(archivo, nombre_seccion):
     return None
 
 
+
 def procesar_logica_estable(df_dem, df_mat, df_cli, df_cap, ajustes_semanales):
-    lista_centros_disponibles = df_cap['Centro'].unique().tolist()
-    C1 = str(lista_centros_disponibles[0])
-    C2 = str(lista_centros_disponibles[1]) if len(lista_centros_disponibles) > 1 else C1
+
+    lista_centros = df_cap['Centro'].unique().tolist()
+    C1 = str(lista_centros[0])  # DG
+    C2 = str(lista_centros[1])  # MCH
 
     PRECIO_KM = 0.15
 
-    df_dem['Fecha_DT'] = pd.to_datetime(df_dem['Fecha de necesidad'])
-    df_dem['Semana_Label'] = df_dem['Fecha_DT'].dt.strftime('%Y-W%U')
+    df_dem["Fecha_DT"] = pd.to_datetime(df_dem["Fecha de necesidad"])
+    df_dem["Semana_Label"] = df_dem["Fecha_DT"].dt.strftime("%Y-W%U")
 
-    df = df_dem.merge(df_mat, on=['Material', 'Unidad'], how='left')
-    df = df.merge(df_cli, on='Cliente', how='left')
+    df = df_dem.merge(df_mat, on=["Material", "Unidad"], how="left")
+    df = df.merge(df_cli, on="Cliente", how="left")
 
     cols_lower = {c.lower(): c for c in df.columns}
 
-    def pick(options):
-        for opt in options:
-            if opt.lower() in cols_lower:
-                return cols_lower[opt.lower()]
+    def pick(names):
+        for name in names:
+            if name.lower() in cols_lower:
+                return cols_lower[name.lower()]
         return None
 
-    col_dist_c1 = pick(["Distancia a DG", "Distáncia a DG"])
-    col_dist_c2 = pick(["Distancia a MCH", "Distáncia a MCH"])
-    col_costkm_c1 = pick(["Coste del envío DG", "Coste envio DG", "Precio KM DG"])
-    col_costkm_c2 = pick(["Coste del envío MCH", "Coste envio MCH", "Precio KM MCH"])
+    dist_c1 = pick(["Distancia a DG", "Distáncia a DG"])
+    dist_c2 = pick(["Distancia a MCH", "Distáncia a MCH"])
+    cost_c1 = pick(["Coste del envío DG", "Coste envio DG", "Precio KM DG"])
+    cost_c2 = pick(["Coste del envío MCH", "Coste envio MCH", "Precio KM MCH"])
 
+    # ===========================
+    # DECISIÓN DE CENTRO
+    # ===========================
     def decidir_centro(r):
-        if str(r.get('Exclusico DG', r.get('Exclusivo DG', ''))).strip().upper() == 'X':
+
+        if str(r.get("Exclusico DG", r.get("Exclusivo DG", ""))).upper() == "X":
             return C1
-        if str(r.get('Exclusivo MCH', '')).strip().upper() == 'X':
+        if str(r.get("Exclusivo MCH", "")).upper() == "X":
             return C2
 
-        dist1 = float(r.get(col_dist_c1, 0) or 0)
-        dist2 = float(r.get(col_dist_c2, 0) or 0)
-        precio1 = float(r.get(col_costkm_c1, PRECIO_KM) or PRECIO_KM)
-        precio2 = float(r.get(col_costkm_c2, PRECIO_KM) or PRECIO_KM)
+        d1 = float(r.get(dist_c1, 0) or 0)
+        d2 = float(r.get(dist_c2, 0) or 0)
+        p1 = float(r.get(cost_c1, PRECIO_KM) or PRECIO_KM)
+        p2 = float(r.get(cost_c2, PRECIO_KM) or PRECIO_KM)
 
-        cf1 = float(r.get('Coste fabricacion unidad DG', 0) or 0)
-        cf2 = float(r.get('Coste fabricacion unidad MCH', 0) or 0)
-        cant = float(r.get('Cantidad', 0) or 0)
+        cf1 = float(r.get("Coste fabricacion unidad DG", 0) or 0)
+        cf2 = float(r.get("Coste fabricacion unidad MCH", 0) or 0)
+        cant = float(r.get("Cantidad", 0) or 0)
 
-        coste1 = dist1 * precio1 + cant * cf1
-        coste2 = dist2 * precio2 + cant * cf2
+        coste1 = d1 * p1 + cant * cf1
+        coste2 = d2 * p2 + cant * cf2
 
         if coste1 < coste2:
             return C1
         elif coste2 < coste1:
             return C2
 
+        # Empate
         rng = np.random.RandomState(r.name)
-        umbral = ajustes_semanales.get(r['Semana_Label'], 50) / 100
-        return C1 if rng.rand() < umbral else C2
+        frac = ajustes_semanales.get(r["Semana_Label"], 50) / 100
+        return C1 if rng.rand() < frac else C2
 
-    df['Centro_Final'] = df.apply(decidir_centro, axis=1)
 
-    df_agrupado = df.groupby(
-        ['Material', 'Unidad', 'Centro_Final', 'Fecha de necesidad', 'Semana_Label']
+    df["Centro_Final"] = df.apply(decidir_centro, axis=1)
+
+
+    df_g = df.groupby(
+        ["Material", "Unidad", "Centro_Final", "Fecha de necesidad", "Semana_Label"]
     ).agg({
-        'Cantidad': 'sum',
-        'Tamaño lote mínimo': 'first',
-        'Tamaño lote máximo': 'first',
-        'Tiempo fabricación unidad DG': 'first',
-        'Tiempo fabricación unidad MCH': 'first'
+        "Cantidad": "sum",
+        "Tamaño lote mínimo": "first",
+        "Tamaño lote máximo": "first",
+        "Tiempo fabricación unidad DG": "first",
+        "Tiempo fabricación unidad MCH": "first"
     }).reset_index()
 
-    # === CAPACIDAD DIARIA ===
+
+    # ==================================
+    # CAPACIDAD DIARIA (ARREGLADA)
+    # ==================================
     horas_col = None
     for c in df_cap.columns:
-        if 'hora' in c.lower() or 'capacidad' in c.lower():
+        if "hora" in c.lower() or "capacidad" in c.lower():
             horas_col = c
             break
 
     if horas_col:
-        capacidad_base = df_cap.groupby('Centro')[horas_col].sum().to_dict()
+        base_cap = df_cap.groupby("Centro")[horas_col].sum().to_dict()
     else:
-        capacidad_base = {C1: float('inf'), C2: float('inf')}
+        base_cap = {C1: float("inf"), C2: float("inf")}
 
-    fechas = sorted(pd.to_datetime(df_agrupado['Fecha de necesidad']).dt.normalize().unique())
-    capacidad_restante = {(c, f): capacidad_base[c] for c in capacidad_base for f in fechas}
+    fechas = sorted(pd.to_datetime(df_g["Fecha de necesidad"]).dt.normalize().unique())
+    capacidad_restante = {(c, f): base_cap[c] for c in base_cap for f in fechas}
 
-    resultado_lotes = []
-    cont = 1
 
-    for _, fila in df_agrupado.iterrows():
-        fecha = pd.to_datetime(fila['Fecha de necesidad']).normalize()
-        semana = fila['Semana_Label']
-        pref = fila['Centro_Final']
+    # ============================
+    # GENERACIÓN DE ÓRDENES
+    # ============================
+    resultado = []
+    contador = 1
 
-        cantidad = max(float(fila['Cantidad']), float(fila['Tamaño lote mínimo']))
-        lote_max = float(fila['Tamaño lote máximo'])
-        num_lotes = math.ceil(cantidad / lote_max)
-        cantidad_lote = round(cantidad / num_lotes, 2)
+    for _, fila in df_g.iterrows():
 
-        t_dg = float(fila['Tiempo fabricación unidad DG'])
-        t_mch = float(fila['Tiempo fabricación unidad MCH'])
+        fecha = pd.to_datetime(fila["Fecha de necesidad"]).normalize()
+        semana = fila["Semana_Label"]
+        pref = fila["Centro_Final"]
 
-        def horas_lote(centro):
-            return cantidad_lote * (t_dg if centro == C1 else t_mch)
+        cant = max(float(fila["Cantidad"]), float(fila["Tamaño lote mínimo"]))
+        max_lote = float(fila["Tamaño lote máximo"])
+        num_lotes = math.ceil(cant / max_lote)
+        tam = round(cant / num_lotes, 2)
+
+        t_dg = float(fila["Tiempo fabricación unidad DG"])
+        t_mch = float(fila["Tiempo fabricación unidad MCH"])
+
+        def horas(c):
+            return tam * (t_dg if c == C1 else t_mch)
 
         for _ in range(num_lotes):
-            centro = pref
-            h_pref = horas_lote(centro)
 
-            if capacidad_restante[(centro, fecha)] >= h_pref:
-                capacidad_restante[(centro, fecha)] -= h_pref
+            centro = pref
+            h_pref = horas(centro)
+
+            clave_pref = (centro, fecha)
+
+            if capacidad_restante.get(clave_pref, -1) >= h_pref:
+                capacidad_restante[clave_pref] -= h_pref
                 sin_cap = False
             else:
                 otro = C2 if centro == C1 else C1
-                h_otro = horas_lote(otro)
+                h_otro = horas(otro)
+                clave_otro = (otro, fecha)
 
-                if capacidad_restante[(otro, fecha)] >= h_otro:
+                if capacidad_restante.get(clave_otro, -1) >= h_otro:
                     centro = otro
-                    capacidad_restante[(otro, fecha)] -= h_otro
+                    capacidad_restante[clave_otro] -= h_otro
                     sin_cap = False
                 else:
                     sin_cap = True
 
-            tiempo = cantidad_lote * (t_dg if centro == C1 else t_mch)
+            tiempo = tam * (t_dg if centro == C1 else t_mch)
 
-            resultado_lotes.append({
-                'Nº de propuesta': cont,
-                'Material': fila['Material'],
-                'Centro': centro,
-                'Clase de orden': 'NORM',
-                'Cantidad a fabricar': cantidad_lote,
-                'Unidad': fila['Unidad'],
-                'Fecha de fabricación': fecha.strftime('%Y%m%d'),
-                'Semana': semana,
-                'Horas': tiempo,
-                'Sin capacidad (informativo)': sin_cap
+            resultado.append({
+                "Nº de propuesta": contador,
+                "Material": fila["Material"],
+                "Centro": centro,
+                "Clase de orden": "NORM",
+                "Cantidad a fabricar": tam,
+                "Unidad": fila["Unidad"],
+                "Fecha de fabricación": fecha.strftime("%Y%m%d"),
+                "Semana": semana,
+                "Horas": tiempo,
+                "Sin capacidad (informativo)": sin_cap
             })
-            cont += 1
+            contador += 1
 
-    return pd.DataFrame(resultado_lotes)
+    return pd.DataFrame(resultado)
+
 
 
 # ==========================================
@@ -204,11 +226,12 @@ tab1, tab2 = st.tabs(["📥 Carga de Archivos", "⚙️ Ajuste y Ejecución"])
 df_cap, df_mat, df_cli, df_dem = None, None, None, None
 
 
-# --- TAB 1 ---
+# --- TAB 1: Carga ---
 with tab1:
     st.subheader("📁 Carga tus archivos Excel")
     
     col1, col2 = st.columns(2)
+    
     with col1:
         st.markdown('<div class="section-container">', unsafe_allow_html=True)
         st.markdown("### 🏭 Capacidad de planta")
@@ -218,8 +241,7 @@ with tab1:
             guardar_archivo(file1, "capacidad_planta")
             st.success("✅ Cargado")
             st.dataframe(df_cap, use_container_width=True, height=150)
-        else:
-            st.info("Esperando archivo...")
+        else: st.info("Esperando archivo...")
         st.markdown('</div>', unsafe_allow_html=True)
 
     with col2:
@@ -231,11 +253,11 @@ with tab1:
             guardar_archivo(file2, "maestro_materiales")
             st.success("✅ Cargado")
             st.dataframe(df_mat, use_container_width=True, height=400)
-        else:
-            st.info("Esperando archivo...")
+        else: st.info("Esperando archivo...")
         st.markdown('</div>', unsafe_allow_html=True)
 
     col3, col4 = st.columns(2)
+    
     with col3:
         st.markdown('<div class="section-container">', unsafe_allow_html=True)
         st.markdown("### 👥 Maestro de clientes")
@@ -245,8 +267,7 @@ with tab1:
             guardar_archivo(file3, "maestro_clientes")
             st.success("✅ Cargado")
             st.dataframe(df_cli, use_container_width=True, height=400)
-        else:
-            st.info("Esperando archivo...")
+        else: st.info("Esperando archivo...")
         st.markdown('</div>', unsafe_allow_html=True)
 
     with col4:
@@ -258,12 +279,12 @@ with tab1:
             guardar_archivo(file4, "demanda")
             st.success("✅ Cargado")
             st.dataframe(df_dem, use_container_width=True, height=400)
-        else:
-            st.info("Esperando archivo...")
+        else: st.info("Esperando archivo...")
         st.markdown('</div>', unsafe_allow_html=True)
 
 
-# --- TAB 2 ---
+
+# --- TAB 2: Ejecución ---
 with tab2:
     if df_cap is None or df_mat is None or df_cli is None or df_dem is None:
         st.warning("⚠️ Por favor, carga los 4 archivos en la pestaña anterior para habilitar los ajustes.")
@@ -271,7 +292,6 @@ with tab2:
         for d in [df_cap, df_mat, df_cli, df_dem]:
             d.columns = d.columns.str.strip()
         
-        centros_detectados = [str(c) for c in df_cap['Centro'].unique()]
         df_dem['Semana_Label'] = pd.to_datetime(df_dem['Fecha de necesidad']).dt.strftime('%Y-W%U')
         lista_semanas = sorted(df_dem['Semana_Label'].unique())
 
@@ -291,6 +311,7 @@ with tab2:
 
             st.success("✅ Cálculo completado con éxito.")
 
+            st.subheader("📋 Detalle de la Propuesta")
             st.dataframe(df_res.drop(columns=['Horas']), use_container_width=True)
 
             output_path = os.path.join(UPLOAD_DIR, "Propuesta_Final.xlsx")
