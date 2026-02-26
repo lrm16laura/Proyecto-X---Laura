@@ -231,7 +231,7 @@ def procesar_logica_estable(df_dem, df_mat, df_cli, df_cap, ajustes_semanales):
                     'Clase de orden': 'NORM',
                     'Cantidad a fabricar': round(restante, 2),
                     'Unidad': fila['Unidad'],
-                    'Fecha de fabricación': fecha_actual.strftime('%Y%m%d'),
+                    'Fecha de fabricación': fecha_actual.strftime('%d.%m.%Y'),  # <--- dd.mm.yyyy
                     'Semana': semana,
                     'Horas': h_total,
                     'Sin capacidad (informativo)': True
@@ -253,7 +253,7 @@ def procesar_logica_estable(df_dem, df_mat, df_cli, df_cap, ajustes_semanales):
                         'Clase de orden': 'NORM',
                         'Cantidad a fabricar': round(restante, 2),
                         'Unidad': fila['Unidad'],
-                        'Fecha de fabricación': fecha_actual.strftime('%Y%m%d'),
+                        'Fecha de fabricación': fecha_actual.strftime('%d.%m.%Y'),  # <--- dd.mm.yyyy
                         'Semana': semana,
                         'Horas': h_neces,
                         'Sin capacidad (informativo)': False
@@ -274,7 +274,7 @@ def procesar_logica_estable(df_dem, df_mat, df_cli, df_cap, ajustes_semanales):
                         'Clase de orden': 'NORM',
                         'Cantidad a fabricar': q_pos,
                         'Unidad': fila['Unidad'],
-                        'Fecha de fabricación': fecha_actual.strftime('%Y%m%d'),
+                        'Fecha de fabricación': fecha_actual.strftime('%d.%m.%Y'),  # <--- dd.mm.yyyy
                         'Semana': semana,
                         'Horas': h_prod,
                         'Sin capacidad (informativo)': False
@@ -295,7 +295,7 @@ def procesar_logica_estable(df_dem, df_mat, df_cli, df_cap, ajustes_semanales):
                         'Clase de orden': 'NORM',
                         'Cantidad a fabricar': round(restante, 2),
                         'Unidad': fila['Unidad'],
-                        'Fecha de fabricación': fecha_actual.strftime('%Y%m%d'),
+                        'Fecha de fabricación': fecha_actual.strftime('%d.%m.%Y'),  # <--- dd.mm.yyyy
                         'Semana': semana,
                         'Horas': h_pend,
                         'Sin capacidad (informativo)': True
