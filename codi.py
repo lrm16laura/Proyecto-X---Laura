@@ -60,7 +60,7 @@ def procesar_logica_estable(df_dem, df_mat, df_cli, df_cap, ajustes_semanales):
     """
     - Mantiene tu interfaz y estructura.
     - Corrige el cálculo de coste usando TUS columnas reales.
-    - Capacidad DIARIA.
+    - Capacidad DIARIA (leída exactamente del Excel de capacidad).
     - Evita OutOfBoundsDatetime con dos guardarraíles:
         * Si el centro preferido tiene capacidad base diaria 0 -> marca sin capacidad y no avanza días.
         * Límite de avance de días (365) -> si lo alcanza, marca sin capacidad y sale.
@@ -142,7 +142,7 @@ def procesar_logica_estable(df_dem, df_mat, df_cli, df_cap, ajustes_semanales):
     }).reset_index()
 
     # ============
-    # CAPACIDAD DIARIA + guardarraíles
+    # CAPACIDAD DIARIA (leída del Excel exactamente) + guardarraíles
     # ============
     horas_col = None
     for c in df_cap.columns:
@@ -151,14 +151,24 @@ def procesar_logica_estable(df_dem, df_mat, df_cli, df_cap, ajustes_semanales):
             break
 
     if horas_col:
-        base_cap_por_centro = df_cap.groupby('Centro')[horas_col].sum().to_dict()
+        # Tomar el valor EXACTO por centro (una fila por centro); si hubiera varias, usar el máximo
+        base_cap_por_centro = {}
+        for c in df_cap['Centro'].astype(str).unique():
+            vals = pd.to_numeric(
+                df_cap.loc[df_cap['Centro'].astype(str) == c, horas_col],
+                errors='coerce'
+            )
+            cap = vals.max()
+            if pd.isna(cap):
+                cap = 0.0
+            base_cap_por_centro[str(c)] = float(cap)
     else:
         base_cap_por_centro = {C1: float('inf'), C2: float('inf')}
 
     # Asegurar claves con 0.0 (por si algún centro no aparece)
     for k in [C1, C2]:
-        if k not in base_cap_por_centro:
-            base_cap_por_centro[k] = 0.0
+        if str(k) not in base_cap_por_centro:
+            base_cap_por_centro[str(k)] = 0.0
 
     # Capacidad restante por (centro, fecha) inicializada bajo demanda
     capacidad_restante = {}
@@ -172,7 +182,7 @@ def procesar_logica_estable(df_dem, df_mat, df_cli, df_cap, ajustes_semanales):
         capacidad_restante[clave] = get_cap(centro, fecha_norm) - horas
 
     # ============================
-    # Generación de órdenes/lotes (SIN CAMBIAR tu estructura de salida)
+    # Generación de órdenes/lotes (SIN CAMBIAR tu estructura de salida) - MODO C
     # ============================
     resultado_lotes = []
     cont = 1
