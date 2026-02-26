@@ -1,11 +1,16 @@
+# ============================================================
+# SISTEMA COMPLETO DE CÁLCULO DE FABRICACIÓN — MODO C + AJUSTE
+# ============================================================
+
 import streamlit as st
 import pandas as pd
 import numpy as np
 import os
-import math
 from datetime import datetime, timedelta
 
-# Configuración de página
+# ------------------------------------------------------------
+# CONFIGURACIÓN DE PÁGINA
+# ------------------------------------------------------------
 st.set_page_config(
     page_title="Sistema de Cálculo de Fabricación",
     page_icon="📊",
@@ -13,46 +18,45 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# ==========================================
-# ESTILOS CSS PERSONALIZADOS
-# ==========================================
+# ------------------------------------------------------------
+# ESTILOS CSS
+# ------------------------------------------------------------
 st.markdown("""
-    <style>
-    .main { padding-top: 2rem; }
-    h1 { color: #1f77b4; text-align: center; }
-    h2 { color: #2c3e50; border-bottom: 3px solid #1f77b4; padding-bottom: .3rem; }
-    .section-container {
-        background-color: #f8f9fa; padding: 1rem;
-        border-radius: 10px; border-left: 5px solid #1f77b4; margin-bottom: 1rem;
-    }
-    .footer { text-align: center; color:#7f8c8d; font-size:13px; margin-top:2rem;
-              padding-top:1rem; border-top:1px solid #ccc; }
-    </style>
+<style>
+.main { padding-top: 2rem; }
+h1 { color: #1f77b4; text-align: center; }
+h2 { color: #2c3e50; border-bottom: 3px solid #1f77b4; padding-bottom: .3rem; }
+.section-container {
+    background-color: #f8f9fa; padding: 1rem;
+    border-radius: 10px; border-left: 5px solid #1f77b4; margin-bottom: 1rem;
+}
+.footer { text-align: center; color:#7f8c8d; font-size:13px; margin-top:2rem;
+          padding-top:1rem; border-top:1px solid #ccc; }
+</style>
 """, unsafe_allow_html=True)
 
-# ==========================================
+# ------------------------------------------------------------
 # UTILIDADES
-# ==========================================
+# ------------------------------------------------------------
 UPLOAD_DIR = "archivos_cargados"
-if not os.path.exists(UPLOAD_DIR):
-    os.makedirs(UPLOAD_DIR)
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 def guardar_archivo(archivo, nombre):
-    if archivo is None: return None
+    if archivo is None:
+        return None
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     ruta = os.path.join(UPLOAD_DIR, f"{nombre}_{ts}.xlsx")
     with open(ruta, "wb") as f:
         f.write(archivo.getbuffer())
     return ruta
 
-# ==========================================
-# REPARTO PROPORCIONAL (NUEVO 🔥)
-# ==========================================
+
+# ------------------------------------------------------------
+# REPARTO PROPORCIONAL (PORCENTAJES)
+# ------------------------------------------------------------
 def repartir_porcentaje(df_semana, pct_dg, dg_code, mch_code):
     """
-    Reparte proporcionalmente ENTRE HORAS:
-    - pct_dg% de las horas totales irán a DG
-    - el resto a MCH
+    Reparte porcentualmente HORAS entre DG y MCH.
     """
     if pct_dg == 0:
         df_semana["Centro"] = mch_code
@@ -62,382 +66,401 @@ def repartir_porcentaje(df_semana, pct_dg, dg_code, mch_code):
         df_semana["Centro"] = dg_code
         return df_semana
 
-    # Ordenamos por horas descendente para asignar más grandes primero
     df_semana = df_semana.sort_values("Horas", ascending=False)
 
     total_h = df_semana["Horas"].sum()
-    objetivo_dg = total_h * (pct_dg / 100)
+    objetivo = total_h * (pct_dg / 100)
 
     acumulado = 0
     centros = []
 
-    for _, row in df_semana.iterrows():
-        if acumulado < objetivo_dg:
+    for _, r in df_semana.iterrows():
+        if acumulado < objetivo:
             centros.append(dg_code)
-            acumulado += row["Horas"]
+            acumulado += r["Horas"]
         else:
             centros.append(mch_code)
 
     df_semana["Centro"] = centros
     return df_semana
 
-# ==========================================
-#   LÓGICA PRINCIPAL (MODO C)
-# ==========================================
-def procesar_logica_estable(df_dem, df_mat, df_cli, df_cap, ajustes):
 
+# ------------------------------------------------------------
+# MODO C COMPLETO (con movimiento SOLO dentro del mismo centro)
+# ------------------------------------------------------------
+def modo_C(df_agrupado, df_cap, df_mat):
+    """
+    Reaplica toda la lógica del Modo C desde cero.
+    Capacidad diaria, división de lotes y movimiento solo al día siguiente.
+    """
+
+    # -------------------------
+    # Detectar centros
+    # -------------------------
+    centros = df_cap["Centro"].astype(str).unique().tolist()
+    DG = next((c for c in centros if c.endswith("833")), centros[0])
+    MCH = next((c for c in centros if c.endswith("184") and c != DG),
+               centros[-1] if len(centros) > 1 else centros[0])
+
+    # -------------------------
+    # Cargar tiempo por unidad
+    # -------------------------
+    tiempos = df_mat[["Material", "Unidad",
+                      "Tiempo fabricación unidad DG",
+                      "Tiempo fabricación unidad MCH"]]
+
+    df = df_agrupado.merge(tiempos, on=["Material", "Unidad"], how="left")
+
+    # -------------------------
+    # Capacidad diaria base
+    # -------------------------
+    horas_col = next((c for c in df_cap.columns
+                      if "hora" in c.lower() or "capacidad" in c.lower()), None)
+
+    base = {}
+    for centro in centros:
+        vals = pd.to_numeric(df_cap.loc[df_cap["Centro"].astype(str) == centro, horas_col],
+                             errors="coerce")
+        cap = vals.max()
+        base[str(centro)] = float(cap if not pd.isna(cap) else 0)
+
+    capacidad_restante = {}
+
+    def get_cap(centro, fecha):
+        clave = (str(centro), fecha)
+        if clave not in capacidad_restante:
+            capacidad_restante[clave] = base[str(centro)]
+        return capacidad_restante[clave]
+
+    def consume(centro, fecha, horas):
+        capacidad_restante[(str(centro), fecha)] = get_cap(centro, fecha) - horas
+
+    # -------------------------
+    # Funciones auxiliares
+    # -------------------------
+    def tiempo(centro, qty, r):
+        if centro == DG:
+            return qty * float(r["Tiempo fabricación unidad DG"])
+        return qty * float(r["Tiempo fabricación unidad MCH"])
+
+    def q_por_capacidad(centro, cap, r):
+        tu = float(r["Tiempo fabricación unidad DG"]) if centro == DG else float(r["Tiempo fabricación unidad MCH"])
+        return cap / tu if tu > 0 else 0
+
+    # -------------------------
+    # Procesamiento Modo C
+    # -------------------------
+    out = []
+    contador = 1
+    MAX_DIAS = 365
+
+    for _, r in df.iterrows():
+
+        centro = r["Centro"]
+        fecha = pd.to_datetime(r["Fecha"]).normalize()
+        semana = r["Semana"]
+
+        total = float(r["Cantidad"])
+        lote_max = float(r["Lote_max"])
+        lote_min = float(r["Lote_min"])
+
+        total = max(total, lote_min)
+
+        # Troceo de lotes
+        lotes = []
+        resto = total
+        while resto > 0:
+            q = min(resto, lote_max)
+            lotes.append(round(q, 2))
+            resto = round(resto - q, 6)
+
+        # Para cada lote…
+        for ql in lotes:
+            pendiente = ql
+            dias = 0
+
+            while pendiente > 0:
+
+                caph = get_cap(centro, fecha)
+                hnec = tiempo(centro, pendiente, r)
+
+                if caph >= hnec:
+                    # Cabe entero
+                    consume(centro, fecha, hnec)
+                    out.append({
+                        "Nº": contador,
+                        "Material": r["Material"],
+                        "Centro": centro,
+                        "Cantidad": round(pendiente, 2),
+                        "Unidad": r["Unidad"],
+                        "Fecha": fecha.strftime("%d.%m.%Y"),
+                        "Semana": semana
+                    })
+                    contador += 1
+                    pendiente = 0
+                    break
+
+                # Producir parte
+                qpos = q_por_capacidad(centro, caph, r)
+
+                if qpos > 0:
+                    hprod = tiempo(centro, qpos, r)
+                    consume(centro, fecha, hprod)
+                    out.append({
+                        "Nº": contador,
+                        "Material": r["Material"],
+                        "Centro": centro,
+                        "Cantidad": round(qpos, 2),
+                        "Unidad": r["Unidad"],
+                        "Fecha": fecha.strftime("%d.%m.%Y"),
+                        "Semana": semana
+                    })
+                    contador += 1
+                    pendiente = round(pendiente - qpos, 6)
+
+                # Si aún queda…
+                if pendiente <= 0:
+                    break
+
+                # Movernos un día más
+                if dias >= MAX_DIAS:
+                    out.append({
+                        "Nº": contador,
+                        "Material": r["Material"],
+                        "Centro": centro,
+                        "Cantidad": round(pendiente, 2),
+                        "Unidad": r["Unidad"],
+                        "Fecha": fecha.strftime("%d.%m.%Y"),
+                        "Semana": semana
+                    })
+                    contador += 1
+                    pendiente = 0
+                    break
+
+                fecha = (fecha + timedelta(days=1)).normalize()
+                semana = fecha.strftime("%Y-W%U")
+                dias += 1
+
+    return pd.DataFrame(out)
+
+
+# ------------------------------------------------------------
+# PRIMERA EJECUCIÓN DEL MODO C + AJUSTE PORCENTUAL + RE-MODO C
+# ------------------------------------------------------------
+def ejecutar_calculo(df_cap, df_mat, df_cli, df_dem, ajustes):
+    # ----------------------
+    # DECISIONES DE COSTE DG/MCH
+    # ----------------------
     def to_float(v):
         if pd.isna(v):
-            raise ValueError("Campo numérico vacío en Excel")
-        if isinstance(v,str):
-            v = v.replace(",",".").strip()
+            return 0
+        if isinstance(v, str):
+            v = v.replace(",", ".").strip()
         return float(v)
 
-    # Detectar centros
     centros = [str(c) for c in df_cap["Centro"].astype(str).unique()]
     DG = next((c for c in centros if c.endswith("833")), centros[0])
-    MCH = next((c for c in centros if c.endswith("184") and c!=DG),
-               centros[-1] if len(centros)>1 else centros[0])
-    C1, C2 = DG, MCH
+    MCH = next((c for c in centros if c.endswith("184") and c != DG),
+               centros[-1] if len(centros) > 1 else centros[0])
 
-    # Preparar demanda
     df_dem["Fecha_DT"] = pd.to_datetime(df_dem["Fecha de necesidad"])
     df_dem["Semana_Label"] = df_dem["Fecha_DT"].dt.strftime("%Y-W%U")
 
-    # Merge materiales + clientes
-    df = df_dem.merge(df_mat,on=["Material","Unidad"],how="left")
-    df = df.merge(df_cli,on="Cliente",how="left")
+    df = df_dem.merge(df_mat, on=["Material", "Unidad"], how="left")
+    df = df.merge(df_cli, on="Cliente", how="left")
 
-    # Columnas reales
-    COL_DIST_DG  = "Distáncia a DG"
-    COL_DIST_MCH = "Distáncia a MCH"
-    COL_COST_DG  = "Coste del envío DG"
+    COL_COST_DG = "Coste del envío DG"
     COL_COST_MCH = "Coste del envío MCH"
-    COL_CU_DG    = "Coste unitario DG"
-    COL_CU_MCH   = "Coste unitario MCH"
+    COL_CU_DG = "Coste unitario DG"
+    COL_CU_MCH = "Coste unitario MCH"
 
-    # Decidir centro por coste
-    def decidir_centro(r):
-        if str(r.get("Exclusico DG","")).upper()=="X": return C1
-        if str(r.get("Exclusivo MCH","")).upper()=="X": return C2
-
-        d1 = to_float(r[COL_DIST_DG])
-        d2 = to_float(r[COL_DIST_MCH])
-        p1 = to_float(r[COL_COST_DG])
-        p2 = to_float(r[COL_COST_MCH])
+    def decidir(r):
+        d1 = to_float(r[COL_COST_DG])
+        d2 = to_float(r[COL_COST_MCH])
         cu1 = to_float(r[COL_CU_DG])
         cu2 = to_float(r[COL_CU_MCH])
-        q   = to_float(r["Cantidad"])
+        q = to_float(r["Cantidad"])
 
-        c1 = d1*p1 + q*cu1
-        c2 = d2*p2 + q*cu2
+        c1 = d1 + q * cu1
+        c2 = d2 + q * cu2
 
-        if c1 < c2: return C1
-        if c2 < c1: return C2
+        return DG if c1 < c2 else MCH
 
-        rng=np.random.RandomState(r.name)
-        return C1 if rng.rand() < ajustes.get(r["Semana_Label"],50)/100 else C2
+    df["Centro_Base"] = df.apply(decidir, axis=1)
 
-    df["Centro_Final"] = df.apply(decidir_centro,axis=1)
-
-    # Agrupar por día
-    df_g = df.groupby(
-        ["Material","Unidad","Centro_Final","Fecha de necesidad","Semana_Label"]
+    # ----------------------
+    # AGRUPACIÓN
+    # ----------------------
+    g = df.groupby(
+        ["Material", "Unidad", "Centro_Base", "Fecha de necesidad", "Semana_Label"]
     ).agg({
-        "Cantidad":"sum",
-        "Tamaño lote mínimo":"first",
-        "Tamaño lote máximo":"first",
-        "Tiempo fabricación unidad DG":"first",
-        "Tiempo fabricación unidad MCH":"first"
+        "Cantidad": "sum",
+        "Tamaño lote mínimo": "first",
+        "Tamaño lote máximo": "first"
     }).reset_index()
 
-    # ============================
-    # CAPACIDAD desde Excel
-    # ============================
-    horas_col = next((c for c in df_cap.columns if "hora" in c.lower() or "capacidad" in c.lower()),None)
+    # Renombrar para Modo C
+    g = g.rename(columns={
+        "Centro_Base": "Centro",
+        "Fecha de necesidad": "Fecha",
+        "Semana_Label": "Semana",
+        "Tamaño lote mínimo": "Lote_min",
+        "Tamaño lote máximo": "Lote_max"
+    })
 
-    if horas_col:
-        base = {}
-        for centro in df_cap["Centro"].astype(str).unique():
-            vals = pd.to_numeric(df_cap.loc[df_cap["Centro"].astype(str)==centro,horas_col],
-                                 errors="coerce")
-            cap = vals.max()
-            if pd.isna(cap): cap=0
-            base[str(centro)] = float(cap)
-    else:
-        base={C1:float("inf"),C2:float("inf")}
+    # ----------------------
+    # PRIMER MODO C
+    # ----------------------
+    df_c = modo_C(g, df_cap, df_mat)
 
-    capacidad_restante={}
+    # ----------------------
+    # Recalcular horas para reparto
+    # ----------------------
+    tiempos = df_mat[["Material", "Unidad",
+                      "Tiempo fabricación unidad DG",
+                      "Tiempo fabricación unidad MCH"]]
 
-    def get_cap(centro,fecha):
-        clave=(str(centro),fecha)
-        if clave not in capacidad_restante:
-            capacidad_restante[clave]=base[str(centro)]
-        return capacidad_restante[clave]
+    df_c = df_c.merge(tiempos, on=["Material", "Unidad"], how="left")
 
-    def consume(centro,fecha,hrs):
-        capacidad_restante[(str(centro),fecha)] = get_cap(centro,fecha)-hrs
+    df_c["Horas"] = np.where(
+        df_c["Centro"] == DG,
+        df_c["Cantidad"] * df_c["Tiempo fabricación unidad DG"],
+        df_c["Cantidad"] * df_c["Tiempo fabricación unidad MCH"]
+    )
 
-    # ============================
-    #   MODO C: producir lo que cabe
-    # ============================
-    resultado=[]
-    cont=1
-    MAX_DIAS=365
+    # ----------------------
+    # AJUSTE PORCENTUAL SEMANAL
+    # ----------------------
+    df_final = []
 
-    for _,fila in df_g.iterrows():
+    for sem, pct in ajustes.items():
+        df_sem = df_c[df_c["Semana"] == sem].copy()
+        df_sem = repartir_porcentaje(df_sem, pct, DG, MCH)
+        df_final.append(df_sem)
 
-        fecha = pd.to_datetime(fila["Fecha de necesidad"]).normalize()
-        semana = fila["Semana_Label"]
-        pref = fila["Centro_Final"]
+    df_adj = pd.concat(df_final, ignore_index=True)
 
-        total = max(to_float(fila["Cantidad"]), to_float(fila["Tamaño lote mínimo"]))
-        lotemax = max(1,to_float(fila["Tamaño lote máximo"]))
+    # ----------------------
+    # REAPLICAR MODO C DESDE CERO
+    # ----------------------
+    df_adj = df_adj.rename(columns={
+        "Fecha": "Fecha",
+        "Lote_min": "Lote_min",
+        "Lote_max": "Lote_max"
+    })
 
-        t_dg = to_float(fila["Tiempo fabricación unidad DG"])
-        t_mch= to_float(fila["Tiempo fabricación unidad MCH"])
+    df_adj = df_adj[["Material", "Unidad", "Centro", "Cantidad", "Fecha",
+                     "Semana", "Lote_min", "Lote_max"]]
 
-        def horas(centro,q):
-            return q*(t_dg if centro==C1 else t_mch)
+    df_modo_C_final = modo_C(df_adj, df_cap, df_mat)
 
-        def qcap(centro,cap):
-            tu = (t_dg if centro==C1 else t_mch)
-            return cap/tu if tu>0 else 0
+    return df_modo_C_final
 
-        # trocear
-        resto=total
-        lotes=[]
-        while resto>0:
-            q=min(resto,lotemax)
-            lotes.append(round(q,2))
-            resto=round(resto-q,6)
 
-        # procesar lotes
-        for lote in lotes:
-            pendiente=lote
-            dias=0
-
-            if base.get(str(pref),0)==0:
-                h=horas(pref,pendiente)
-                resultado.append({
-                    "Nº de propuesta":cont,"Material":fila["Material"],
-                    "Centro":pref,"Clase de orden":"NORM",
-                    "Cantidad a fabricar":round(pendiente,2),
-                    "Unidad":fila["Unidad"],
-                    "Fecha de fabricación":fecha.strftime("%d.%m.%Y"),
-                    "Semana":semana,"Horas":h
-                })
-                cont+=1
-                continue
-
-            while pendiente>0:
-
-                caph=get_cap(pref,fecha)
-                hnec=horas(pref,pendiente)
-
-                if caph>=hnec:
-                    consume(pref,fecha,hnec)
-                    resultado.append({
-                        "Nº de propuesta":cont,"Material":fila["Material"],
-                        "Centro":pref,"Clase de orden":"NORM",
-                        "Cantidad a fabricar":round(pendiente,2),
-                        "Unidad":fila["Unidad"],
-                        "Fecha de fabricación":fecha.strftime("%d.%m.%Y"),
-                        "Semana":semana,"Horas":hnec
-                    })
-                    cont+=1
-                    pendiente=0
-                    break
-
-                # producir parte hoy
-                qpos=qcap(pref,caph)
-                if qpos>0:
-                    hprod=horas(pref,qpos)
-                    consume(pref,fecha,hprod)
-                    resultado.append({
-                        "Nº de propuesta":cont,"Material":fila["Material"],
-                        "Centro":pref,"Clase de orden":"NORM",
-                        "Cantidad a fabricar":round(qpos,2),
-                        "Unidad":fila["Unidad"],
-                        "Fecha de fabricación":fecha.strftime("%d.%m.%Y"),
-                        "Semana":semana,"Horas":hprod
-                    })
-                    cont+=1
-                    pendiente=round(pendiente-qpos,6)
-                    if get_cap(pref,fecha)>0:
-                        continue
-
-                if pendiente<=0:
-                    break
-
-                if dias>=MAX_DIAS:
-                    hpend=horas(pref,pendiente)
-                    resultado.append({
-                        "Nº de propuesta":cont,"Material":fila["Material"],
-                        "Centro":pref,"Clase de orden":"NORM",
-                        "Cantidad a fabricar":round(pendiente,2),
-                        "Unidad":fila["Unidad"],
-                        "Fecha de fabricación":fecha.strftime("%d.%m.%Y"),
-                        "Semana":semana,"Horas":hpend
-                    })
-                    cont+=1
-                    pendiente=0
-                    break
-
-                fecha=(fecha+timedelta(days=1)).normalize()
-                semana=fecha.strftime("%Y-W%U")
-                dias+=1
-
-    return pd.DataFrame(resultado)
-
-# ==========================================
-#         INTERFAZ
-# ==========================================
+# ------------------------------------------------------------
+# INTERFAZ DE STREAMLIT
+# ------------------------------------------------------------
 st.markdown("<h1>📊 Sistema de Cálculo de Fabricación</h1>", unsafe_allow_html=True)
-st.markdown("Carga los 4 archivos Excel y ejecuta el cálculo en Modo C.")
+
+st.markdown("Carga los archivos y ejecuta Modo C + ajuste proporcional + remonte completo de Modo C.")
 st.markdown("---")
 
-tab1, tab2 = st.tabs(["📥 Carga de Archivos","⚙️ Ejecución"])
+tab1, tab2 = st.tabs(["📥 Cargar Archivos", "⚙️ Ejecutar"])
 
-df_cap=df_mat=df_cli=df_dem=None
+df_cap = df_mat = df_cli = df_dem = None
 
-# ------------------------------------------
-# TAB 1: Carga
-# ------------------------------------------
+# ============================================================
+# TAB 1 — CARGA
+# ============================================================
 with tab1:
 
     st.subheader("Carga de Datos")
 
-    col1,col2 = st.columns(2)
+    col1, col2 = st.columns(2)
 
     with col1:
-        st.markdown('<div class="section-container">',unsafe_allow_html=True)
+        st.markdown('<div class="section-container">', unsafe_allow_html=True)
         st.markdown("### Capacidad")
-        f1 = st.file_uploader("Subir Capacidad",type=["xlsx"],key="cap")
+        f1 = st.file_uploader("Subir Capacidad", type=["xlsx"])
         if f1:
-            df_cap=pd.read_excel(f1)
-            guardar_archivo(f1,"capacidad")
-            st.success("✔ Cargado")
+            df_cap = pd.read_excel(f1)
+            guardar_archivo(f1, "capacidad")
+            st.success("✔ Archivo cargado")
             st.dataframe(df_cap)
-        st.markdown("</div>",unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
 
     with col2:
-        st.markdown('<div class="section-container">',unsafe_allow_html=True)
+        st.markdown('<div class="section-container">', unsafe_allow_html=True)
         st.markdown("### Materiales")
-        f2 = st.file_uploader("Subir Materiales",type=["xlsx"],key="mat")
+        f2 = st.file_uploader("Subir Materiales", type=["xlsx"])
         if f2:
-            df_mat=pd.read_excel(f2)
-            guardar_archivo(f2,"materiales")
-            st.success("✔ Cargado")
+            df_mat = pd.read_excel(f2)
+            guardar_archivo(f2, "materiales")
+            st.success("✔ Archivo cargado")
             st.dataframe(df_mat)
-        st.markdown("</div>",unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
 
-    col3,col4 = st.columns(2)
+
+    col3, col4 = st.columns(2)
 
     with col3:
-        st.markdown('<div class="section-container">',unsafe_allow_html=True)
+        st.markdown('<div class="section-container">', unsafe_allow_html=True)
         st.markdown("### Clientes")
-        f3 = st.file_uploader("Subir Clientes",type=["xlsx"],key="cli")
+        f3 = st.file_uploader("Subir Clientes", type=["xlsx"])
         if f3:
-            df_cli=pd.read_excel(f3)
-            guardar_archivo(f3,"clientes")
-            st.success("✔ Cargado")
+            df_cli = pd.read_excel(f3)
+            guardar_archivo(f3, "clientes")
+            st.success("✔ Archivo cargado")
             st.dataframe(df_cli)
-        st.markdown("</div>",unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
 
     with col4:
-        st.markdown('<div class="section-container">',unsafe_allow_html=True)
+        st.markdown('<div class="section-container">', unsafe_allow_html=True)
         st.markdown("### Demanda")
-        f4 = st.file_uploader("Subir Demanda",type=["xlsx"],key="dem")
+        f4 = st.file_uploader("Subir Demanda", type=["xlsx"])
         if f4:
-            df_dem=pd.read_excel(f4)
-            guardar_archivo(f4,"demanda")
-            st.success("✔ Cargado")
+            df_dem = pd.read_excel(f4)
+            guardar_archivo(f4, "demanda")
+            st.success("✔ Archivo cargado")
             st.dataframe(df_dem)
-        st.markdown("</div>",unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
 
-# ------------------------------------------
-# TAB 2: Ejecución
-# ------------------------------------------
+
+# ============================================================
+# TAB 2 — EJECUCIÓN
+# ============================================================
 with tab2:
 
-    if any(x is None for x in [df_cap,df_mat,df_cli,df_dem]):
-        st.warning("⚠️ Carga los 4 archivos")
+    if any(x is None for x in [df_cap, df_mat, df_cli, df_dem]):
+        st.warning("⚠️ Debes cargar los 4 archivos.")
         st.stop()
 
-    for d in [df_cap,df_mat,df_cli,df_dem]:
-        d.columns=d.columns.str.strip()
+    df_dem["Semana_Label"] = pd.to_datetime(df_dem["Fecha de necesidad"]).dt.strftime("%Y-W%U")
+    semanas = sorted(df_dem["Semana_Label"].unique())
 
-    centros=list(df_cap["Centro"].astype(str).unique())
-    df_dem["Semana_Label"]=pd.to_datetime(df_dem["Fecha de necesidad"]).dt.strftime("%Y-W%U")
-    semanas=sorted(df_dem["Semana_Label"].unique())
+    st.subheader("Ajuste por semana (0% = MCH / 100% = DG)")
+    ajustes = {s: st.slider(s, 0, 100, 50) for s in semanas}
 
-    st.subheader("⚙️ Asignación por semana (0% = MCH / 100% = DG / resto = repartido proporcional)")
-    ajustes={s: st.slider(s,0,100,50) for s in semanas}
+    if st.button("🚀 Ejecutar cálculo", use_container_width=True):
 
-    if st.button("🚀 Ejecutar cálculo",use_container_width=True):
+        with st.spinner("Procesando toda la lógica…"):
 
-        with st.spinner("Procesando..."):
-            df_res = procesar_logica_estable(df_dem,df_mat,df_cli,df_cap,ajustes)
-
-        # -----------------------------------------------
-        # 🔧 REASIGNACIÓN PROPORCIONAL DE CENTRO POR SEMANA
-        # -----------------------------------------------
-        DG = next((c for c in centros if c.endswith("833")), centros[0])
-        MCH = next((c for c in centros if c.endswith("184") and c!=DG),
-                   centros[1] if len(centros)>1 else centros[0])
-
-        # Recuperar tiempos para recalcular horas
-        tiempos=df_mat[["Material","Unidad",
-                        "Tiempo fabricación unidad DG",
-                        "Tiempo fabricación unidad MCH"]]
-        df_tmp=df_res.merge(tiempos,on=["Material","Unidad"],how="left")
-
-        # Horas iniciales antes de repartir
-        df_res["Horas"]=np.where(
-            df_res["Centro"].astype(str)==str(DG),
-            df_res["Cantidad a fabricar"]*df_tmp["Tiempo fabricación unidad DG"],
-            df_res["Cantidad a fabricar"]*df_tmp["Tiempo fabricación unidad MCH"]
-        )
-
-        df_final=[]
-
-        for sem,pct in ajustes.items():
-            df_sem=df_res[df_res["Semana"]==sem].copy()
-            df_sem=repartir_porcentaje(df_sem,pct,DG,MCH)
-            df_final.append(df_sem)
-
-        df_res=pd.concat(df_final,ignore_index=True)
-
-        # Recalcular horas después del reparto
-        df_tmp=df_res.merge(tiempos,on=["Material","Unidad"],how="left")
-        df_res["Horas"]=np.where(
-            df_res["Centro"].astype(str)==str(DG),
-            df_res["Cantidad a fabricar"]*df_tmp["Tiempo fabricación unidad DG"],
-            df_res["Cantidad a fabricar"]*df_tmp["Tiempo fabricación unidad MCH"]
-        )
+            df_res = ejecutar_calculo(df_cap, df_mat, df_cli, df_dem, ajustes)
 
         st.success("✔ Cálculo completado")
 
-        # Mostrar tabla
-        st.dataframe(df_res.drop(columns=["Horas"],errors="ignore"),use_container_width=True)
+        st.dataframe(df_res, use_container_width=True)
 
-        # Gráficos arreglados (ahora Horas existe)
-        st.subheader("📊 Distribución de carga horaria")
-        carga_plot=df_res.groupby(["Semana","Centro"])["Horas"].sum().unstack().fillna(0)
-        st.bar_chart(carga_plot)
+        out = os.path.join(UPLOAD_DIR, "Propuesta_Final.xlsx")
+        df_res.to_excel(out, index=False)
 
-        # Exportación
-        out=os.path.join(UPLOAD_DIR,"Propuesta_Final.xlsx")
-        df_res.drop(columns=["Semana","Horas"],errors="ignore").to_excel(out,index=False)
-
-        with open(out,"rb") as f:
-            st.download_button("📥 Descargar Excel",f,
-                file_name=f"Propuesta_Fabricacion_"+datetime.now().strftime("%Y%m%d")+".xlsx")
+        with open(out, "rb") as f:
+            st.download_button("📥 Descargar Excel", f,
+                               file_name="Propuesta_Fabricacion.xlsx")
 
 # Footer
 st.markdown("""
 <div class="footer">
-✨ Sistema de Cálculo de Fabricación — Modo C + Reparto proporcional  
+✨ Sistema de Cálculo de Fabricación — Modo C + Reparto + Re-modo C  
 </div>
 """, unsafe_allow_html=True)
