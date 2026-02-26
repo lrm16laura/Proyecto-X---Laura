@@ -50,14 +50,23 @@ def guardar_archivo(archivo, nombre):
         f.write(archivo.getbuffer())
     return ruta
 
+def to_float(v):
+    if pd.isna(v):
+        return 0.0
+    if isinstance(v, str):
+        v = v.replace(",", ".").strip()
+    return float(v)
 
 # ------------------------------------------------------------
 # REPARTO PROPORCIONAL (PORCENTAJES)
 # ------------------------------------------------------------
 def repartir_porcentaje(df_semana, pct_dg, dg_code, mch_code):
     """
-    Reparte porcentualmente HORAS entre DG y MCH.
+    Reparte porcentualmente HORAS entre DG y MCH manteniendo el resto de columnas.
     """
+    if len(df_semana) == 0:
+        return df_semana
+
     if pct_dg == 0:
         df_semana["Centro"] = mch_code
         return df_semana
@@ -69,9 +78,9 @@ def repartir_porcentaje(df_semana, pct_dg, dg_code, mch_code):
     df_semana = df_semana.sort_values("Horas", ascending=False)
 
     total_h = df_semana["Horas"].sum()
-    objetivo = total_h * (pct_dg / 100)
+    objetivo = total_h * (pct_dg / 100.0)
 
-    acumulado = 0
+    acumulado = 0.0
     centros = []
 
     for _, r in df_semana.iterrows():
@@ -84,68 +93,75 @@ def repartir_porcentaje(df_semana, pct_dg, dg_code, mch_code):
     df_semana["Centro"] = centros
     return df_semana
 
-
 # ------------------------------------------------------------
-# MODO C COMPLETO (con movimiento SOLO dentro del mismo centro)
+# MODO C COMPLETO (movimiento SOLO al día siguiente y mismo centro)
 # ------------------------------------------------------------
 def modo_C(df_agrupado, df_cap, df_mat):
     """
     Reaplica toda la lógica del Modo C desde cero.
-    Capacidad diaria, división de lotes y movimiento solo al día siguiente.
+    Capacidad diaria, división de lotes, movimiento solo al día siguiente y al mismo centro.
+    Espera columnas en df_agrupado:
+      Material, Unidad, Centro, Cantidad, Fecha, Semana, Lote_min, Lote_max
     """
 
     # -------------------------
     # Detectar centros
     # -------------------------
     centros = df_cap["Centro"].astype(str).unique().tolist()
-    DG = next((c for c in centros if c.endswith("833")), centros[0])
-    MCH = next((c for c in centros if c.endswith("184") and c != DG),
-               centros[-1] if len(centros) > 1 else centros[0])
+    DG = next((c for c in centros if str(c).endswith("833")), centros[0])
+    MCH = next(
+        (c for c in centros if str(c).endswith("184") and c != DG),
+        centros[-1] if len(centros) > 1 else centros[0]
+    )
 
     # -------------------------
-    # Cargar tiempo por unidad
+    # Tiempos por unidad
     # -------------------------
     tiempos = df_mat[["Material", "Unidad",
                       "Tiempo fabricación unidad DG",
                       "Tiempo fabricación unidad MCH"]]
-
     df = df_agrupado.merge(tiempos, on=["Material", "Unidad"], how="left")
 
     # -------------------------
     # Capacidad diaria base
     # -------------------------
-    horas_col = next((c for c in df_cap.columns
-                      if "hora" in c.lower() or "capacidad" in c.lower()), None)
-
+    horas_col = next(
+        (c for c in df_cap.columns if "hora" in c.lower() or "capacidad" in c.lower()),
+        None
+    )
     base = {}
     for centro in centros:
-        vals = pd.to_numeric(df_cap.loc[df_cap["Centro"].astype(str) == centro, horas_col],
-                             errors="coerce")
-        cap = vals.max()
-        base[str(centro)] = float(cap if not pd.isna(cap) else 0)
+        vals = pd.to_numeric(
+            df_cap.loc[df_cap["Centro"].astype(str) == str(centro), horas_col],
+            errors="coerce"
+        )
+        cap = float(vals.max()) if not vals.empty else 0.0
+        if np.isnan(cap):
+            cap = 0.0
+        base[str(centro)] = cap
 
     capacidad_restante = {}
 
-    def get_cap(centro, fecha):
-        clave = (str(centro), fecha)
+    def get_cap(centro, fecha_dt):
+        clave = (str(centro), fecha_dt)
         if clave not in capacidad_restante:
-            capacidad_restante[clave] = base[str(centro)]
+            capacidad_restante[clave] = base.get(str(centro), 0.0)
         return capacidad_restante[clave]
 
-    def consume(centro, fecha, horas):
-        capacidad_restante[(str(centro), fecha)] = get_cap(centro, fecha) - horas
+    def consume(centro, fecha_dt, horas):
+        capacidad_restante[(str(centro), fecha_dt)] = get_cap(centro, fecha_dt) - horas
 
     # -------------------------
-    # Funciones auxiliares
+    # Auxiliares
     # -------------------------
     def tiempo(centro, qty, r):
         if centro == DG:
-            return qty * float(r["Tiempo fabricación unidad DG"])
-        return qty * float(r["Tiempo fabricación unidad MCH"])
+            return qty * to_float(r["Tiempo fabricación unidad DG"])
+        return qty * to_float(r["Tiempo fabricación unidad MCH"])
 
     def q_por_capacidad(centro, cap, r):
-        tu = float(r["Tiempo fabricación unidad DG"]) if centro == DG else float(r["Tiempo fabricación unidad MCH"])
-        return cap / tu if tu > 0 else 0
+        tu = to_float(r["Tiempo fabricación unidad DG"]) if centro == DG else to_float(r["Tiempo fabricación unidad MCH"])
+        return cap / tu if tu > 0 else 0.0
 
     # -------------------------
     # Procesamiento Modo C
@@ -154,15 +170,18 @@ def modo_C(df_agrupado, df_cap, df_mat):
     contador = 1
     MAX_DIAS = 365
 
+    # Asegurar tipos esperados
+    df = df.copy()
+    # La "Fecha" puede venir en str 'dd.MM.yyyy' o datetime; ambas son aceptadas:
+    # pd.to_datetime la entiende correctamente con dayfirst si es dd.MM.yyyy.
     for _, r in df.iterrows():
-
         centro = r["Centro"]
         fecha = pd.to_datetime(r["Fecha"]).normalize()
-        semana = r["Semana"]
+        semana = str(r["Semana"])
 
-        total = float(r["Cantidad"])
-        lote_max = float(r["Lote_max"])
-        lote_min = float(r["Lote_min"])
+        total = to_float(r["Cantidad"])
+        lote_max = max(1.0, to_float(r["Lote_max"]))
+        lote_min = max(0.0, to_float(r["Lote_min"]))
 
         total = max(total, lote_min)
 
@@ -184,7 +203,7 @@ def modo_C(df_agrupado, df_cap, df_mat):
                 caph = get_cap(centro, fecha)
                 hnec = tiempo(centro, pendiente, r)
 
-                if caph >= hnec:
+                if caph >= hnec and pendiente > 0:
                     # Cabe entero
                     consume(centro, fecha, hnec)
                     out.append({
@@ -194,7 +213,9 @@ def modo_C(df_agrupado, df_cap, df_mat):
                         "Cantidad": round(pendiente, 2),
                         "Unidad": r["Unidad"],
                         "Fecha": fecha.strftime("%d.%m.%Y"),
-                        "Semana": semana
+                        "Semana": semana,
+                        "Lote_min": lote_min,     # ✅ preservar
+                        "Lote_max": lote_max      # ✅ preservar
                     })
                     contador += 1
                     pendiente = 0
@@ -213,7 +234,9 @@ def modo_C(df_agrupado, df_cap, df_mat):
                         "Cantidad": round(qpos, 2),
                         "Unidad": r["Unidad"],
                         "Fecha": fecha.strftime("%d.%m.%Y"),
-                        "Semana": semana
+                        "Semana": semana,
+                        "Lote_min": lote_min,     # ✅ preservar
+                        "Lote_max": lote_max      # ✅ preservar
                     })
                     contador += 1
                     pendiente = round(pendiente - qpos, 6)
@@ -231,7 +254,9 @@ def modo_C(df_agrupado, df_cap, df_mat):
                         "Cantidad": round(pendiente, 2),
                         "Unidad": r["Unidad"],
                         "Fecha": fecha.strftime("%d.%m.%Y"),
-                        "Semana": semana
+                        "Semana": semana,
+                        "Lote_min": lote_min,     # ✅ preservar
+                        "Lote_max": lote_max      # ✅ preservar
                     })
                     contador += 1
                     pendiente = 0
@@ -243,7 +268,6 @@ def modo_C(df_agrupado, df_cap, df_mat):
 
     return pd.DataFrame(out)
 
-
 # ------------------------------------------------------------
 # PRIMERA EJECUCIÓN DEL MODO C + AJUSTE PORCENTUAL + RE-MODO C
 # ------------------------------------------------------------
@@ -251,18 +275,14 @@ def ejecutar_calculo(df_cap, df_mat, df_cli, df_dem, ajustes):
     # ----------------------
     # DECISIONES DE COSTE DG/MCH
     # ----------------------
-    def to_float(v):
-        if pd.isna(v):
-            return 0
-        if isinstance(v, str):
-            v = v.replace(",", ".").strip()
-        return float(v)
-
     centros = [str(c) for c in df_cap["Centro"].astype(str).unique()]
     DG = next((c for c in centros if c.endswith("833")), centros[0])
-    MCH = next((c for c in centros if c.endswith("184") and c != DG),
-               centros[-1] if len(centros) > 1 else centros[0])
+    MCH = next(
+        (c for c in centros if c.endswith("184") and c != DG),
+        centros[-1] if len(centros) > 1 else centros[0]
+    )
 
+    df_dem = df_dem.copy()
     df_dem["Fecha_DT"] = pd.to_datetime(df_dem["Fecha de necesidad"])
     df_dem["Semana_Label"] = df_dem["Fecha_DT"].dt.strftime("%Y-W%U")
 
@@ -275,21 +295,20 @@ def ejecutar_calculo(df_cap, df_mat, df_cli, df_dem, ajustes):
     COL_CU_MCH = "Coste unitario MCH"
 
     def decidir(r):
-        d1 = to_float(r[COL_COST_DG])
-        d2 = to_float(r[COL_COST_MCH])
-        cu1 = to_float(r[COL_CU_DG])
-        cu2 = to_float(r[COL_CU_MCH])
-        q = to_float(r["Cantidad"])
-
+        d1 = to_float(r.get(COL_COST_DG, 0))
+        d2 = to_float(r.get(COL_COST_MCH, 0))
+        cu1 = to_float(r.get(COL_CU_DG, 0))
+        cu2 = to_float(r.get(COL_CU_MCH, 0))
+        q = to_float(r.get("Cantidad", 0))
         c1 = d1 + q * cu1
         c2 = d2 + q * cu2
-
-        return DG if c1 < c2 else MCH
+        # En caso de empate, cae a DG
+        return DG if c1 <= c2 else MCH
 
     df["Centro_Base"] = df.apply(decidir, axis=1)
 
     # ----------------------
-    # AGRUPACIÓN
+    # AGRUPACIÓN BASE
     # ----------------------
     g = df.groupby(
         ["Material", "Unidad", "Centro_Base", "Fecha de necesidad", "Semana_Label"]
@@ -299,7 +318,6 @@ def ejecutar_calculo(df_cap, df_mat, df_cli, df_dem, ajustes):
         "Tamaño lote máximo": "first"
     }).reset_index()
 
-    # Renombrar para Modo C
     g = g.rename(columns={
         "Centro_Base": "Centro",
         "Fecha de necesidad": "Fecha",
@@ -319,8 +337,14 @@ def ejecutar_calculo(df_cap, df_mat, df_cli, df_dem, ajustes):
     tiempos = df_mat[["Material", "Unidad",
                       "Tiempo fabricación unidad DG",
                       "Tiempo fabricación unidad MCH"]]
-
     df_c = df_c.merge(tiempos, on=["Material", "Unidad"], how="left")
+
+    # Fallback defensivo de lotes (por si faltaran)
+    if not {"Lote_min", "Lote_max"}.issubset(df_c.columns):
+        lotes = df_mat[["Material", "Unidad", "Tamaño lote mínimo", "Tamaño lote máximo"]].rename(
+            columns={"Tamaño lote mínimo": "Lote_min", "Tamaño lote máximo": "Lote_max"}
+        )
+        df_c = df_c.merge(lotes, on=["Material", "Unidad"], how="left")
 
     df_c["Horas"] = np.where(
         df_c["Centro"] == DG,
@@ -332,8 +356,9 @@ def ejecutar_calculo(df_cap, df_mat, df_cli, df_dem, ajustes):
     # AJUSTE PORCENTUAL SEMANAL
     # ----------------------
     df_final = []
-
-    for sem, pct in ajustes.items():
+    semanas_presentes = sorted(df_c["Semana"].unique())
+    for sem in semanas_presentes:
+        pct = ajustes.get(sem, 50)  # por defecto 50% si no viene slider
         df_sem = df_c[df_c["Semana"] == sem].copy()
         df_sem = repartir_porcentaje(df_sem, pct, DG, MCH)
         df_final.append(df_sem)
@@ -341,27 +366,23 @@ def ejecutar_calculo(df_cap, df_mat, df_cli, df_dem, ajustes):
     df_adj = pd.concat(df_final, ignore_index=True)
 
     # ----------------------
-    # REAPLICAR MODO C DESDE CERO
+    # Preparar dataset para re-aplicar Modo C
     # ----------------------
-    df_adj = df_adj.rename(columns={
-        "Fecha": "Fecha",
-        "Lote_min": "Lote_min",
-        "Lote_max": "Lote_max"
-    })
-
+    # Usamos las mismas fechas (mínimas ya fijadas por la 1ª pasada) y conservamos lotes
     df_adj = df_adj[["Material", "Unidad", "Centro", "Cantidad", "Fecha",
                      "Semana", "Lote_min", "Lote_max"]]
 
+    # ----------------------
+    # REAPLICAR MODO C DESDE CERO
+    # ----------------------
     df_modo_C_final = modo_C(df_adj, df_cap, df_mat)
 
     return df_modo_C_final
-
 
 # ------------------------------------------------------------
 # INTERFAZ DE STREAMLIT
 # ------------------------------------------------------------
 st.markdown("<h1>📊 Sistema de Cálculo de Fabricación</h1>", unsafe_allow_html=True)
-
 st.markdown("Carga los archivos y ejecuta Modo C + ajuste proporcional + remonte completo de Modo C.")
 st.markdown("---")
 
@@ -400,7 +421,6 @@ with tab1:
             st.dataframe(df_mat)
         st.markdown("</div>", unsafe_allow_html=True)
 
-
     col3, col4 = st.columns(2)
 
     with col3:
@@ -425,7 +445,6 @@ with tab1:
             st.dataframe(df_dem)
         st.markdown("</div>", unsafe_allow_html=True)
 
-
 # ============================================================
 # TAB 2 — EJECUCIÓN
 # ============================================================
@@ -435,6 +454,11 @@ with tab2:
         st.warning("⚠️ Debes cargar los 4 archivos.")
         st.stop()
 
+    # Estandarizar columnas sin espacios
+    for d in [df_cap, df_mat, df_cli, df_dem]:
+        d.columns = d.columns.str.strip()
+
+    df_dem = df_dem.copy()
     df_dem["Semana_Label"] = pd.to_datetime(df_dem["Fecha de necesidad"]).dt.strftime("%Y-W%U")
     semanas = sorted(df_dem["Semana_Label"].unique())
 
@@ -444,16 +468,13 @@ with tab2:
     if st.button("🚀 Ejecutar cálculo", use_container_width=True):
 
         with st.spinner("Procesando toda la lógica…"):
-
             df_res = ejecutar_calculo(df_cap, df_mat, df_cli, df_dem, ajustes)
 
         st.success("✔ Cálculo completado")
-
         st.dataframe(df_res, use_container_width=True)
 
         out = os.path.join(UPLOAD_DIR, "Propuesta_Final.xlsx")
         df_res.to_excel(out, index=False)
-
         with open(out, "rb") as f:
             st.download_button("📥 Descargar Excel", f,
                                file_name="Propuesta_Fabricacion.xlsx")
