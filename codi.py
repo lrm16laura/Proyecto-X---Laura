@@ -154,7 +154,7 @@ with tab1:
     # Bloque 2: Maestro Materiales
     with col2:
         st.markdown('<div class="section-container">', unsafe_allow_html=True)
-        st.markdown("📦 Maestro de materiales")
+        st.markdown("### 📦 Maestro de materiales")
         file2 = st.file_uploader("Subir Materiales", type=["xlsx"], key="u2", label_visibility="collapsed")
         if file2:
             try:
@@ -171,7 +171,7 @@ with tab1:
     # Bloque 3: Maestro Clientes
     with col3:
         st.markdown('<div class="section-container">', unsafe_allow_html=True)
-        st.markdown("👥 Maestro de clientes")
+        st.markdown("### 👥 Maestro de clientes")
         file3 = st.file_uploader("Subir Clientes", type=["xlsx"], key="u3", label_visibility="collapsed")
         if file3:
             try:
@@ -186,7 +186,7 @@ with tab1:
     # Bloque 4: Demanda
     with col4:
         st.markdown('<div class="section-container">', unsafe_allow_html=True)
-        st.markdown(" 📈 Demanda")
+        st.markdown("### 📈 Demanda")
         file4 = st.file_uploader("Subir Demanda", type=["xlsx"], key="u4", label_visibility="collapsed")
         if file4:
             try:
