@@ -1,4 +1,3 @@
-# Hola
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -14,29 +13,14 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Estilos CSS personalizados
+# ==========================================
+# ESTILOS CSS PERSONALIZADOS (Programa 1 + 2)
+# ==========================================
 st.markdown("""
     <style>
-    /* Estilos generales */
-    .main {
-        padding-top: 2rem;
-    }
-    
-    /* Títulos */
-    h1 {
-        color: #1f77b4;
-        text-align: center;
-        font-size: 2.5rem;
-        margin-bottom: 1rem;
-    }
-    
-    h2 {
-        color: #2c3e50;
-        border-bottom: 3px solid #1f77b4;
-        padding-bottom: 0.5rem;
-    }
-    
-    /* Contenedores de secciones */
+    .main { padding-top: 2rem; }
+    h1 { color: #1f77b4; text-align: center; font-size: 2.5rem; margin-bottom: 1rem; }
+    h2 { color: #2c3e50; border-bottom: 3px solid #1f77b4; padding-bottom: 0.5rem; }
     .section-container {
         background-color: #f8f9fa;
         padding: 1.5rem;
@@ -44,44 +28,11 @@ st.markdown("""
         border-left: 5px solid #1f77b4;
         margin-bottom: 1.5rem;
     }
-    
-    /* Botones */
-    .stButton > button {
-        width: 100%;
-        padding: 12px;
-        font-size: 1rem;
-        font-weight: bold;
-        border-radius: 8px;
-        border: none;
-        cursor: pointer;
-        transition: all 0.3s ease;
-    }
-    
-    .stButton > button:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 4px 12px rgba(31, 119, 180, 0.3);
-    }
-    
-    /* Dataframe */
-    .dataframe {
-        border-radius: 8px;
-    }
-    
-    /* Mensajes */
-    .success {
-        padding: 1rem;
-        border-radius: 8px;
-    }
-    
-    /* Footer */
     .footer {
-        text-align: center;
-        color: #7f8c8d;
-        font-size: 0.9rem;
-        margin-top: 2rem;
-        padding-top: 1rem;
-        border-top: 1px solid #ecf0f1;
+        text-align: center; color: #7f8c8d; font-size: 0.9rem; margin-top: 2rem;
+        padding-top: 1rem; border-top: 1px solid #ecf0f1;
     }
+    .stButton > button { width: 100%; font-weight: bold; border-radius: 8px; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -91,350 +42,220 @@ if not os.path.exists(UPLOAD_DIR):
     os.makedirs(UPLOAD_DIR)
 
 # ==========================================
-# FUNCIONES AUXILIARES
+# FUNCIONES AUXILIARES Y LÓGICA (Programa 2)
 # ==========================================
 
 def guardar_archivo(archivo, nombre_seccion):
-    """Guarda el archivo en la carpeta local"""
+    """Guarda el archivo en la carpeta local (del Programa 1)"""
     if archivo is not None:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         nombre_archivo = f"{nombre_seccion}_{timestamp}.xlsx"
         ruta_archivo = os.path.join(UPLOAD_DIR, nombre_archivo)
-        
         with open(ruta_archivo, "wb") as f:
             f.write(archivo.getbuffer())
-        
         return ruta_archivo
     return None
 
-def ejecutar_calculo(df_mat, df_cli, df_dem, df_cap):
-    """
-    Ejecuta el programa de cálculo de propuesta de fabricación
-    """
-    try:
-        # ==========================================
-        # VALIDACIONES DE SEGURIDAD
-        # ==========================================
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        
-        status_text.write("🔍 Iniciando validación de datos...")
-        progress_bar.progress(10)
-        
-        errores_detectados = False
+def procesar_logica_estable(df_dem, df_mat, df_cli, df_cap, ajustes_semanales):
+    """Lógica optimizada del Programa 2"""
+    lista_centros_disponibles = df_cap['Centro'].unique().tolist()
+    C1 = str(lista_centros_disponibles[0])
+    C2 = str(lista_centros_disponibles[1]) if len(lista_centros_disponibles) > 1 else C1
+    
+    PRECIO_KM = 0.15 
 
-        # Limpieza de espacios en blanco en los nombres de las columnas
-        for d in [df_mat, df_cli, df_dem, df_cap]:
-            d.columns = d.columns.str.strip()
+    df_dem['Fecha_DT'] = pd.to_datetime(df_dem['Fecha de necesidad'])
+    df_dem['Semana_Label'] = df_dem['Fecha_DT'].dt.strftime('%Y-W%U')
 
-        # Definición de columnas obligatorias
-        obligatorias = {
-            "Maestro Materiales": ['Material', 'Unidad', 'Tiempo fabricación unidad DG', 'Tiempo fabricación unidad MCH', 'Coste unitario DG', 'Coste unitario MCH'],
-            "Maestro Clientes": ['Cliente', 'Distáncia a DG', 'Distáncia a MCH', 'Coste del envío DG', 'Coste del envío MCH'],
-            "Demanda": ['Material', 'Unidad', 'Cantidad', 'Fecha de necesidad', 'Cliente'],
-            "Capacidad_Planta": ['Planta', 'Centro', 'Capacidad horas']
-        }
+    df = df_dem.merge(df_mat, on=['Material', 'Unidad'], how='left')
+    df = df.merge(df_cli, on='Cliente', how='left')
 
-        archivos = {
-            "Maestro Materiales": df_mat, 
-            "Maestro Clientes": df_cli, 
-            "Demanda": df_dem, 
-            "Capacidad_Planta": df_cap
-        }
+    def decidir_centro(r):
+        if str(r.get('Exclusico DG')).strip().upper() == 'X': return C1
+        if str(r.get('Exclusivo MCH')).strip().upper() == 'X': return C2
 
-        status_text.write("🔍 Verificando columnas obligatorias...")
-        progress_bar.progress(20)
-        
-        # Chequeo de nulos en columnas críticas
-        for nombre, dataframe in archivos.items():
-            cols_a_revisar = obligatorias[nombre]
-            cols_existentes = [col for col in cols_a_revisar if col in dataframe.columns]
-            if dataframe[cols_existentes].isnull().values.any():
-                st.warning(f"⚠️ AVISO: Faltan datos obligatorios en '{nombre}'.")
-                nulos = dataframe[cols_existentes].isnull().sum()
-                st.write(nulos[nulos > 0])
-                errores_detectados = True
+        coste_c1 = (r.get(f'Distancia a {C1}', 0) * PRECIO_KM) + (r.get('Cantidad', 0) * r.get('Coste fabricacion unidad DG', 0))
+        coste_c2 = (r.get(f'Distancia a {C2}', 0) * PRECIO_KM) + (r.get('Cantidad', 0) * r.get('Coste fabricacion unidad MCH', 0))
 
-        status_text.write("🔍 Validando unidades...")
-        progress_bar.progress(30)
-        
-        # Validación de Unidades (Demanda vs Maestro)
-        df_check_unidades = df_dem.merge(df_mat[['Material', 'Unidad']], on='Material', suffixes=('_dem', '_mat'))
-        unidades_error = df_check_unidades[df_check_unidades['Unidad_dem'] != df_check_unidades['Unidad_mat']]
-        if not unidades_error.empty:
-            st.error(f"❌ ERROR: La Unidad en Demanda no coincide con el Maestro para: {unidades_error['Material'].unique()}")
-            errores_detectados = True
+        if coste_c1 < coste_c2: return C1
+        elif coste_c2 < coste_c1: return C2
+        else:
+            rng = np.random.RandomState(r.name)
+            valor_azar = rng.rand()
+            umbral = ajustes_semanales.get(r['Semana_Label'], 50) / 100
+            return C1 if valor_azar < umbral else C2
 
-        status_text.write("🔍 Verificando integridad de datos...")
-        progress_bar.progress(40)
-        
-        # Chequeo de Integridad (Materiales y Clientes existentes)
-        mat_demanda = set(df_dem['Material'].unique())
-        mat_maestro = set(df_mat['Material'].unique())
-        if not mat_demanda.issubset(mat_maestro):
-            st.error(f"❌ ERROR: Materiales en Demanda que NO están en Maestro: {mat_demanda - mat_maestro}")
-            errores_detectados = True
+    df['Centro_Final'] = df.apply(decidir_centro, axis=1)
 
-        cli_demanda = set(df_dem['Cliente'].unique())
-        cli_maestro = set(df_cli['Cliente'].unique())
-        if not cli_demanda.issubset(cli_maestro):
-            st.error(f"❌ ERROR: Clientes en Demanda que NO están en Maestro: {cli_demanda - cli_maestro}")
-            errores_detectados = True
+    df_agrupado = df.groupby(['Material', 'Unidad', 'Centro_Final', 'Fecha de necesidad', 'Semana_Label']).agg({
+        'Cantidad': 'sum',
+        'Tamaño lote mínimo': 'first',
+        'Tamaño lote máximo': 'first',
+        'Tiempo fabricación unidad DG': 'first',
+        'Tiempo fabricación unidad MCH': 'first'
+    }).reset_index()
 
-        if errores_detectados:
-            st.error("🛑 DETENIDO: Corrige los errores en los Excels antes de continuar.")
-            progress_bar.progress(100)
-            return None
-        
-        st.success("✅ Validación completada: Datos consistentes")
-        progress_bar.progress(50)
+    resultado_lotes = []
+    cont = 1
+    for _, fila in df_agrupado.iterrows():
+        cant_total = max(fila['Cantidad'], fila['Tamaño lote mínimo'])
+        num_ordenes = math.ceil(cant_total / fila['Tamaño lote máximo'])
+        cant_por_orden = round(cant_total / num_ordenes, 2)
 
-        # ==========================================
-        # PREPARACIÓN Y ASIGNACIÓN INICIAL
-        # ==========================================
-        status_text.write("⚙️ Preparando datos...")
-        progress_bar.progress(60)
-        
-        df_mat[['% fijo DG', '% fijo MCH']] = df_mat[['% fijo DG', '% fijo MCH']].fillna(0)
-        df_cli[['Exclusico DG', 'Exclusivo MCH']] = df_cli[['Exclusico DG', 'Exclusivo MCH']].fillna('')
-
-        df = df_dem.merge(df_mat, on=['Material', 'Unidad'], how='left')
-        df = df.merge(df_cli, on='Cliente', how='left')
-
-        # Cálculos de costes para decisión
-        df['C_DG'] = (df['Cantidad'] * df['Coste unitario DG']) + (df['Distáncia a DG'] * df['Coste del envío DG'] * df['Cantidad'])
-        df['C_MCH'] = (df['Cantidad'] * df['Coste unitario MCH']) + (df['Distáncia a MCH'] * df['Coste del envío MCH'] * df['Cantidad'])
-
-        # Asignación de planta
-        def decidir_planta(r):
-            if r['Exclusico DG'] == 'X': return 'España'
-            if r['Exclusivo MCH'] == 'X': return 'Suiza'
-            return 'España' if r['C_DG'] <= r['C_MCH'] else 'Suiza'
-
-        df['Planta_Temp'] = df.apply(decidir_planta, axis=1)
-
-        status_text.write("📦 Agrupando por lotes...")
-        progress_bar.progress(70)
-        
-        # ==========================================
-        # AGRUPACIÓN POR LOTE
-        # ==========================================
-        df_agrupado = df.groupby(['Material', 'Unidad', 'Planta_Temp', 'Fecha de necesidad']).agg({
-            'Cantidad': 'sum',
-            'Tamaño lote mínimo': 'first',
-            'Tamaño lote máximo': 'first',
-            'Tiempo fabricación unidad DG': 'first',
-            'Tiempo fabricación unidad MCH': 'first'
-        }).reset_index()
-
-        centros_map = {
-            'España': df_cap.loc[df_cap['Planta'] == 'DG', 'Centro'].values[0] if len(df_cap.loc[df_cap['Planta'] == 'DG']) > 0 else 'DG',
-            'Suiza': df_cap.loc[df_cap['Planta'] == 'MCH', 'Centro'].values[0] if len(df_cap.loc[df_cap['Planta'] == 'MCH']) > 0 else 'MCH'
-        }
-
-        resultado_lotes = []
-        cont_propuesta = 1
-
-        for _, fila in df_agrupado.iterrows():
-            cant_total = fila['Cantidad']
-            lote_min = fila['Tamaño lote mínimo']
-            lote_max = fila['Tamaño lote máximo']
-            
-            # Ajuste al Lote Mínimo
-            if cant_total < lote_min:
-                cant_total = lote_min
-                
-            # División por Lote Máximo
-            num_ordenes = math.ceil(cant_total / lote_max)
-            cant_por_orden = cant_total / num_ordenes
-
-            for _ in range(num_ordenes):
-                fecha_str = pd.to_datetime(fila['Fecha de necesidad']).strftime('%Y%m%d')
-                
-                resultado_lotes.append({
-                    'Nº de propuesta': cont_propuesta,
-                    'Material': fila['Material'],
-                    'Centro': centros_map[fila['Planta_Temp']],
-                    'Clase de orden': 'NORM',
-                    'Cantidad a fabricar': round(cant_por_orden, 2),
-                    'Unidad': fila['Unidad'],
-                    'Fecha de fabricación': fecha_str
-                })
-                cont_propuesta += 1
-
-        status_text.write("💾 Guardando resultados...")
-        progress_bar.progress(90)
-        
-        # ==========================================
-        # EXPORTACIÓN
-        # ==========================================
-        df_final = pd.DataFrame(resultado_lotes)
-        ruta_salida = os.path.join(UPLOAD_DIR, f"Propuesta_Fabricacion_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx")
-        df_final.to_excel(ruta_salida, index=False)
-
-        status_text.write("✅ ¡Cálculo completado!")
-        progress_bar.progress(100)
-        
-        return df_final, ruta_salida
-
-    except Exception as e:
-        st.error(f"❌ Error durante el cálculo: {str(e)}")
-        return None, None
+        for _ in range(num_ordenes):
+            t_fab = fila['Tiempo fabricación unidad DG'] if fila['Centro_Final'] == C1 else fila['Tiempo fabricación unidad MCH']
+            resultado_lotes.append({
+                'Nº de propuesta': cont,
+                'Material': fila['Material'],
+                'Centro': fila['Centro_Final'],
+                'Clase de orden': 'NORM',
+                'Cantidad a fabricar': cant_por_orden,
+                'Unidad': fila['Unidad'],
+                'Fecha de fabricación': pd.to_datetime(fila['Fecha de necesidad']).strftime('%Y%m%d'),
+                'Semana': fila['Semana_Label'],
+                'Horas': cant_por_orden * t_fab
+            })
+            cont += 1
+    return pd.DataFrame(resultado_lotes)
 
 # ==========================================
 # INTERFAZ PRINCIPAL
 # ==========================================
-
-# Título principal
 st.markdown("<h1>📊 Sistema de Cálculo de Fabricación</h1>", unsafe_allow_html=True)
-st.markdown("Carga los 4 archivos Excel necesarios y ejecuta el cálculo de propuesta de fabricación")
+st.markdown("Carga los 4 archivos Excel necesarios y ajusta los parámetros de ejecución.")
 st.markdown("---")
 
-# Tabs para mejor organización
-tab1, tab2 = st.tabs(["📥 Carga de Archivos", "⚙️ Ejecución"])
+tab1, tab2 = st.tabs(["📥 Carga de Archivos", "⚙️ Ajuste y Ejecución"])
 
-# ==========================================
-# TAB 1: CARGA DE ARCHIVOS
-# ==========================================
+# Variables de estado para los DataFrames
+df_cap, df_mat, df_cli, df_dem = None, None, None, None
+
+# --- TAB 1: CARGA DE ARCHIVOS (Diseño Programa 1) ---
 with tab1:
     st.subheader("📁 Carga tus archivos Excel")
     
     col1, col2 = st.columns(2)
     
-    # BOTÓN 1: CAPACIDAD DE PLANTA
+    # Bloque 1: Capacidad
     with col1:
-        with st.container():
-            st.markdown('<div class="section-container">', unsafe_allow_html=True)
-            st.markdown("### 🏭 Capacidad de planta")
-            file1 = st.file_uploader("", type=["xlsx", "xls"], key="file1", label_visibility="collapsed")
-            df_cap = None
-            
-            if file1 is not None:
-                try:
-                    df_cap = pd.read_excel(file1)
-                    ruta = guardar_archivo(file1, "capacidad_planta")
-                    st.success("✅ Archivo cargado correctamente")
-                    st.dataframe(df_cap, use_container_width=True, height=200)
-                except Exception as e:
-                    st.error(f"❌ Error: {str(e)}")
-            else:
-                st.info("Esperando archivo...")
-            st.markdown('</div>', unsafe_allow_html=True)
-    
-    # BOTÓN 2: MAESTRO DE MATERIALES
+        st.markdown('<div class="section-container">', unsafe_allow_html=True)
+        st.markdown("### 🏭 Capacidad de planta")
+        file1 = st.file_uploader("Subir Capacidad", type=["xlsx"], key="u1", label_visibility="collapsed")
+        if file1:
+            try:
+                df_cap = pd.read_excel(file1)
+                guardar_archivo(file1, "capacidad_planta")
+                st.success("✅ Cargado")
+                st.dataframe(df_cap, use_container_width=True, height=150)
+            except Exception as e: st.error(f"Error: {e}")
+        else: st.info("Esperando archivo...")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    # Bloque 2: Maestro Materiales
     with col2:
-        with st.container():
-            st.markdown('<div class="section-container">', unsafe_allow_html=True)
-            st.markdown("### 📦 Maestro de materiales")
-            file2 = st.file_uploader("", type=["xlsx", "xls"], key="file2", label_visibility="collapsed")
-            df_mat = None
-            
-            if file2 is not None:
-                try:
-                    df_mat = pd.read_excel(file2)
-                    ruta = guardar_archivo(file2, "maestro_materiales")
-                    st.success("✅ Archivo cargado correctamente")
-                    st.dataframe(df_mat, use_container_width=True, height=200)
-                except Exception as e:
-                    st.error(f"❌ Error: {str(e)}")
-            else:
-                st.info("Esperando archivo...")
-            st.markdown('</div>', unsafe_allow_html=True)
-    
+        st.markdown('<div class="section-container">', unsafe_allow_html=True)
+        st.markdown("### 📦 Maestro de materiales")
+        file2 = st.file_uploader("Subir Materiales", type=["xlsx"], key="u2", label_visibility="collapsed")
+        if file2:
+            try:
+                df_mat = pd.read_excel(file2)
+                guardar_archivo(file2, "maestro_materiales")
+                st.success("✅ Cargado")
+                st.dataframe(df_mat, use_container_width=True, height=400)
+            except Exception as e: st.error(f"Error: {e}")
+        else: st.info("Esperando archivo...")
+        st.markdown('</div>', unsafe_allow_html=True)
+
     col3, col4 = st.columns(2)
     
-    # BOTÓN 3: MAESTRO DE CLIENTES
+    # Bloque 3: Maestro Clientes
     with col3:
-        with st.container():
-            st.markdown('<div class="section-container">', unsafe_allow_html=True)
-            st.markdown("### 👥 Maestro de clientes")
-            file3 = st.file_uploader("", type=["xlsx", "xls"], key="file3", label_visibility="collapsed")
-            df_cli = None
-            
-            if file3 is not None:
-                try:
-                    df_cli = pd.read_excel(file3)
-                    ruta = guardar_archivo(file3, "maestro_clientes")
-                    st.success("✅ Archivo cargado correctamente")
-                    st.dataframe(df_cli, use_container_width=True, height=200)
-                except Exception as e:
-                    st.error(f"❌ Error: {str(e)}")
-            else:
-                st.info("Esperando archivo...")
-            st.markdown('</div>', unsafe_allow_html=True)
-    
-    # BOTÓN 4: DEMANDA
-    with col4:
-        with st.container():
-            st.markdown('<div class="section-container">', unsafe_allow_html=True)
-            st.markdown("### 📈 Demanda")
-            file4 = st.file_uploader("", type=["xlsx", "xls"], key="file4", label_visibility="collapsed")
-            df_dem = None
-            
-            if file4 is not None:
-                try:
-                    df_dem = pd.read_excel(file4)
-                    ruta = guardar_archivo(file4, "demanda")
-                    st.success("✅ Archivo cargado correctamente")
-                    st.dataframe(df_dem, use_container_width=True, height=200)
-                except Exception as e:
-                    st.error(f"❌ Error: {str(e)}")
-            else:
-                st.info("Esperando archivo...")
-            st.markdown('</div>', unsafe_allow_html=True)
-
-# ==========================================
-# TAB 2: EJECUCIÓN
-# ==========================================
-with tab2:
-    st.subheader("⚙️ Ejecutar cálculo de fabricación")
-    
-    with st.container():
         st.markdown('<div class="section-container">', unsafe_allow_html=True)
-        col_btn = st.columns([2, 1, 2])
-        
-        with col_btn[1]:
-            if st.button("🚀 EJECUTAR CÁLCULO", key="btn_calcular", use_container_width=True):
-                if df_cap is None or df_mat is None or df_cli is None or df_dem is None:
-                    st.error("❌ Por favor, carga todos los 4 archivos Excel antes de ejecutar el cálculo.")
-                else:
-                    st.markdown("---")
-                    df_resultado, ruta_salida = ejecutar_calculo(df_mat, df_cli, df_dem, df_cap)
-                    
-                    if df_resultado is not None:
-                        st.markdown("---")
-                        st.subheader("📋 Resultado de la Propuesta de Fabricación")
-                        
-                        # Métricas
-                        col_metrics = st.columns(4)
-                        col_metrics[0].metric("📦 Total de Propuestas", len(df_resultado))
-                        col_metrics[1].metric("🏭 Centros utilizados", df_resultado['Centro'].nunique())
-                        col_metrics[2].metric("📊 Materiales distintos", df_resultado['Material'].nunique())
-                        col_metrics[3].metric("📈 Cantidad total", f"{df_resultado['Cantidad a fabricar'].sum():.0f}")
-                        
-                        st.markdown("---")
-                        st.dataframe(df_resultado, use_container_width=True)
-                        
-                        col_download = st.columns([1, 2, 1])
-                        
-                        with col_download[1]:
-                            # Opción para descargar Excel
-                            with open(ruta_salida, "rb") as f:
-                                st.download_button(
-                                    label="📥 Descargar Excel",
-                                    data=f,
-                                    file_name=f"Propuesta_Fabricacion_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                    use_container_width=True
-                                )
-        
+        st.markdown("### 👥 Maestro de clientes")
+        file3 = st.file_uploader("Subir Clientes", type=["xlsx"], key="u3", label_visibility="collapsed")
+        if file3:
+            try:
+                df_cli = pd.read_excel(file3)
+                guardar_archivo(file3, "maestro_clientes")
+                st.success("✅ Cargado")
+                st.dataframe(df_cli, use_container_width=True, height=400)
+            except Exception as e: st.error(f"Error: {e}")
+        else: st.info("Esperando archivo...")
         st.markdown('</div>', unsafe_allow_html=True)
+
+    # Bloque 4: Demanda
+    with col4:
+        st.markdown('<div class="section-container">', unsafe_allow_html=True)
+        st.markdown("### 📈 Demanda")
+        file4 = st.file_uploader("Subir Demanda", type=["xlsx"], key="u4", label_visibility="collapsed")
+        if file4:
+            try:
+                df_dem = pd.read_excel(file4)
+                guardar_archivo(file4, "demanda")
+                st.success("✅ Cargado")
+                st.dataframe(df_dem, use_container_width=True, height=400)
+            except Exception as e: st.error(f"Error: {e}")
+        else: st.info("Esperando archivo...")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+# --- TAB 2: EJECUCIÓN (Lógica Programa 2) ---
+with tab2:
+    if df_cap is None or df_mat is None or df_cli is None or df_dem is None:
+        st.warning("⚠️ Por favor, carga los 4 archivos en la pestaña anterior para habilitar los ajustes.")
+    else:
+        # Limpieza de columnas
+        for d in [df_cap, df_mat, df_cli, df_dem]: d.columns = d.columns.str.strip()
+        
+        centros_detectados = [str(c) for c in df_cap['Centro'].unique()]
+        df_dem['Semana_Label'] = pd.to_datetime(df_dem['Fecha de necesidad']).dt.strftime('%Y-W%U')
+        lista_semanas = sorted(df_dem['Semana_Label'].unique())
+
+        st.subheader("⚙️ Configuración de Porcentajes por Semana")
+        c1_name = centros_detectados[0]
+        c2_name = centros_detectados[1] if len(centros_detectados) > 1 else "Centro 2"
+        
+        st.info(f"El sistema priorizará automáticamente el centro más barato. Usa los sliders para definir el reparto en caso de empate técnico entre **{c1_name}** y **{c2_name}**.")
+
+        ajustes = {}
+        cols_sliders = st.columns(4)
+        for i, sem in enumerate(lista_semanas):
+            with cols_sliders[i % 4]:
+                ajustes[sem] = st.slider(f"Sem {sem}", 0, 100, 50)
+
+        st.markdown("---")
+        if st.button("🚀 EJECUTAR CÁLCULO DE PROPUESTA", use_container_width=True):
+            with st.spinner("Calculando asignación óptima de costes..."):
+                df_res = procesar_logica_estable(df_dem, df_mat, df_cli, df_cap, ajustes)
+
+                st.success("✅ Cálculo completado con éxito.")
+                
+                # Métricas
+                m1, m2, m3 = st.columns(3)
+                m1.metric("Total Propuestas", len(df_res))
+                for i, centro in enumerate(centros_detectados):
+                    if i == 0:
+                        m2.metric(f"Horas Totales {centro}", f"{df_res[df_res['Centro']==centro]['Horas'].sum():,.1f}h")
+                    elif i == 1:
+                        m3.metric(f"Horas Totales {centro}", f"{df_res[df_res['Centro']==centro]['Horas'].sum():,.1f}h")
+
+                st.subheader("📊 Distribución de Carga Horaria")
+                carga_plot = df_res.groupby(['Semana', 'Centro'])['Horas'].sum().unstack().fillna(0)
+                st.bar_chart(carga_plot)
+
+                st.subheader("📋 Detalle de la Propuesta")
+                st.dataframe(df_res.drop(columns=['Horas']), use_container_width=True)
+
+                # Exportación
+                output_path = os.path.join(UPLOAD_DIR, "Propuesta_Final.xlsx")
+                df_res.drop(columns=['Semana', 'Horas']).to_excel(output_path, index=False)
+                with open(output_path, "rb") as f:
+                    st.download_button("📥 Descargar Propuesta en Excel", data=f, file_name=f"Propuesta_Fabricacion_{datetime.now().strftime('%Y%m%d')}.xlsx")
 
 # Footer
 st.markdown("---")
 st.markdown("""
 <div class="footer">
-    <p>✨ <strong>Sistema de Cálculo de Fabricación</strong> - Versión 2.0</p>
+    <p>✨ <strong>Sistema de Cálculo de Fabricación</strong> - Versión 3.2 (Interfaz Unificada)</p>
     <p>Desarrollado con Streamlit | 2026</p>
 </div>
 """, unsafe_allow_html=True)
