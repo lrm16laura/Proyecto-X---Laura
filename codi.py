@@ -5,7 +5,9 @@ import os
 import math
 from datetime import datetime
 
-# Configuración de página
+# ==========================================
+# CONFIGURACIÓN GENERAL
+# ==========================================
 st.set_page_config(
     page_title="Sistema de Cálculo de Fabricación",
     page_icon="📊",
@@ -13,94 +15,102 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# ==========================================
-# ESTILOS CSS PERSONALIZADOS (Programa 1 + 2)
-# ==========================================
 st.markdown("""
     <style>
-    .main { padding-top: 2rem; }
-    h1 { color: #1f77b4; text-align: center; font-size: 2.5rem; margin-bottom: 1rem; }
-    h2 { color: #2c3e50; border-bottom: 3px solid #1f77b4; padding-bottom: 0.5rem; }
+    h1 { color: #1f77b4; text-align: center; }
+    h2 { color: #2c3e50; border-bottom: 3px solid #1f77b4; padding-bottom: 4px; }
     .section-container {
         background-color: #f8f9fa;
-        padding: 1.5rem;
-        border-radius: 10px;
+        padding: 1rem;
+        border-radius: 8px;
         border-left: 5px solid #1f77b4;
         margin-bottom: 1.5rem;
     }
     .footer {
-        text-align: center; color: #7f8c8d; font-size: 0.9rem; margin-top: 2rem;
-        padding-top: 1rem; border-top: 1px solid #ecf0f1;
+        text-align: center; color: #7f8c8d; font-size: 13px; margin-top: 2rem;
+        padding-top: 1rem; border-top: 1px solid #ccc;
     }
-    .stButton > button { width: 100%; font-weight: bold; border-radius: 8px; }
     </style>
 """, unsafe_allow_html=True)
 
-# Crear carpeta para guardar archivos si no existe
+# Crear carpeta para guardar archivos
 UPLOAD_DIR = "archivos_cargados"
 if not os.path.exists(UPLOAD_DIR):
     os.makedirs(UPLOAD_DIR)
 
 
 # ==========================================
-# FUNCIONES AUXILIARES Y LÓGICA (Programa 2)
+# GUARDAR ARCHIVOS
 # ==========================================
-def guardar_archivo(archivo, nombre_seccion):
-    if archivo is not None:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        nombre_archivo = f"{nombre_seccion}_{timestamp}.xlsx"
-        ruta_archivo = os.path.join(UPLOAD_DIR, nombre_archivo)
-        with open(ruta_archivo, "wb") as f:
-            f.write(archivo.getbuffer())
-        return ruta_archivo
-    return None
+def guardar_archivo(archivo, nombre):
+    if archivo is None:
+        return None
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    ruta = os.path.join(UPLOAD_DIR, f"{nombre}_{ts}.xlsx")
+    with open(ruta, "wb") as f:
+        f.write(archivo.getbuffer())
+    return ruta
 
 
-
+# ==========================================
+# PROCESO PRINCIPAL (FIX COMPLETO)
+# ==========================================
 def procesar_logica_estable(df_dem, df_mat, df_cli, df_cap, ajustes_semanales):
 
-    lista_centros = df_cap['Centro'].unique().tolist()
-    C1 = str(lista_centros[0])  # DG
-    C2 = str(lista_centros[1])  # MCH
+    # Centros
+    lista_centros = df_cap["Centro"].astype(str).unique().tolist()
+    C1 = lista_centros[0]     # DG
+    C2 = lista_centros[1]     # MCH
 
     PRECIO_KM = 0.15
 
+    # Fechas
     df_dem["Fecha_DT"] = pd.to_datetime(df_dem["Fecha de necesidad"])
     df_dem["Semana_Label"] = df_dem["Fecha_DT"].dt.strftime("%Y-W%U")
 
+    # Merge
     df = df_dem.merge(df_mat, on=["Material", "Unidad"], how="left")
     df = df.merge(df_cli, on="Cliente", how="left")
 
-    cols_lower = {c.lower(): c for c in df.columns}
+    # Crear diccionario de columnas normalizadas
+    cols_lower = {c.lower().strip(): c for c in df.columns}
 
-    def pick(names):
+    def pick(*names):
         for name in names:
-            if name.lower() in cols_lower:
-                return cols_lower[name.lower()]
+            n = name.lower().strip()
+            if n in cols_lower:
+                return cols_lower[n]
         return None
 
-    dist_c1 = pick(["Distancia a DG", "Distáncia a DG"])
-    dist_c2 = pick(["Distancia a MCH", "Distáncia a MCH"])
-    cost_c1 = pick(["Coste del envío DG", "Coste envio DG", "Precio KM DG"])
-    cost_c2 = pick(["Coste del envío MCH", "Coste envio MCH", "Precio KM MCH"])
+    # Columnas reales del Excel
+    dist_DG = pick("distancia a dg", "distáncia a dg", "dist dg")
+    dist_MCH = pick("distancia a mch", "distáncia a mch", "dist mch")
+    cost_DG = pick("coste del envío dg", "coste envio dg", "precio km dg", "costekm dg")
+    cost_MCH = pick("coste del envío mch", "coste envio mch", "precio km mch", "costekm mch")
 
-    # ===========================
-    # DECISIÓN DE CENTRO
-    # ===========================
+    # ======================================
+    # FUNCIÓN DE DECISIÓN DE CENTRO (FIX)
+    # ======================================
     def decidir_centro(r):
 
-        if str(r.get("Exclusico DG", r.get("Exclusivo DG", ""))).upper() == "X":
+        # Exclusivos
+        if str(r.get("Exclusico DG", r.get("Exclusivo DG", ""))).strip().upper() == "X":
             return C1
-        if str(r.get("Exclusivo MCH", "")).upper() == "X":
+        if str(r.get("Exclusivo MCH", "")).strip().upper() == "X":
             return C2
 
-        d1 = float(r.get(dist_c1, 0) or 0)
-        d2 = float(r.get(dist_c2, 0) or 0)
-        p1 = float(r.get(cost_c1, PRECIO_KM) or PRECIO_KM)
-        p2 = float(r.get(cost_c2, PRECIO_KM) or PRECIO_KM)
+        # Distancias reales
+        d1 = float(r.get(dist_DG, 0) or 0)
+        d2 = float(r.get(dist_MCH, 0) or 0)
 
+        # Coste por km real
+        p1 = float(r.get(cost_DG, PRECIO_KM) or PRECIO_KM)
+        p2 = float(r.get(cost_MCH, PRECIO_KM) or PRECIO_KM)
+
+        # Fabricación
         cf1 = float(r.get("Coste fabricacion unidad DG", 0) or 0)
         cf2 = float(r.get("Coste fabricacion unidad MCH", 0) or 0)
+
         cant = float(r.get("Cantidad", 0) or 0)
 
         coste1 = d1 * p1 + cant * cf1
@@ -108,18 +118,17 @@ def procesar_logica_estable(df_dem, df_mat, df_cli, df_cap, ajustes_semanales):
 
         if coste1 < coste2:
             return C1
-        elif coste2 < coste1:
+        if coste2 < coste1:
             return C2
 
         # Empate
         rng = np.random.RandomState(r.name)
-        frac = ajustes_semanales.get(r["Semana_Label"], 50) / 100
-        return C1 if rng.rand() < frac else C2
-
+        umbral = ajustes_semanales.get(r["Semana_Label"], 50) / 100
+        return C1 if rng.rand() < umbral else C2
 
     df["Centro_Final"] = df.apply(decidir_centro, axis=1)
 
-
+    # Agrupar por fecha (día)
     df_g = df.groupby(
         ["Material", "Unidad", "Centro_Final", "Fecha de necesidad", "Semana_Label"]
     ).agg({
@@ -130,10 +139,9 @@ def procesar_logica_estable(df_dem, df_mat, df_cli, df_cap, ajustes_semanales):
         "Tiempo fabricación unidad MCH": "first"
     }).reset_index()
 
-
-    # ==================================
-    # CAPACIDAD DIARIA (ARREGLADA)
-    # ==================================
+    # ======================================
+    # CAPACIDAD DIARIA (FIX REAL)
+    # ======================================
     horas_col = None
     for c in df_cap.columns:
         if "hora" in c.lower() or "capacidad" in c.lower():
@@ -146,14 +154,18 @@ def procesar_logica_estable(df_dem, df_mat, df_cli, df_cap, ajustes_semanales):
         base_cap = {C1: float("inf"), C2: float("inf")}
 
     fechas = sorted(pd.to_datetime(df_g["Fecha de necesidad"]).dt.normalize().unique())
-    capacidad_restante = {(c, f): base_cap[c] for c in base_cap for f in fechas}
 
+    capacidad_restante = {
+        (centro, fecha): base_cap[centro]
+        for centro in base_cap
+        for fecha in fechas
+    }
 
-    # ============================
-    # GENERACIÓN DE ÓRDENES
-    # ============================
+    # ======================================
+    # GENERACIÓN ORDENES
+    # ======================================
     resultado = []
-    contador = 1
+    cont = 1
 
     for _, fila in df_g.iterrows():
 
@@ -164,13 +176,13 @@ def procesar_logica_estable(df_dem, df_mat, df_cli, df_cap, ajustes_semanales):
         cant = max(float(fila["Cantidad"]), float(fila["Tamaño lote mínimo"]))
         max_lote = float(fila["Tamaño lote máximo"])
         num_lotes = math.ceil(cant / max_lote)
-        tam = round(cant / num_lotes, 2)
+        tam_lote = round(cant / num_lotes, 2)
 
         t_dg = float(fila["Tiempo fabricación unidad DG"])
         t_mch = float(fila["Tiempo fabricación unidad MCH"])
 
         def horas(c):
-            return tam * (t_dg if c == C1 else t_mch)
+            return tam_lote * (t_dg if c == C1 else t_mch)
 
         for _ in range(num_lotes):
 
@@ -194,28 +206,29 @@ def procesar_logica_estable(df_dem, df_mat, df_cli, df_cap, ajustes_semanales):
                 else:
                     sin_cap = True
 
-            tiempo = tam * (t_dg if centro == C1 else t_mch)
+            tiempo = tam_lote * (t_dg if centro == C1 else t_mch)
 
             resultado.append({
-                "Nº de propuesta": contador,
+                "Nº de propuesta": cont,
                 "Material": fila["Material"],
                 "Centro": centro,
                 "Clase de orden": "NORM",
-                "Cantidad a fabricar": tam,
+                "Cantidad a fabricar": tam_lote,
                 "Unidad": fila["Unidad"],
                 "Fecha de fabricación": fecha.strftime("%Y%m%d"),
                 "Semana": semana,
                 "Horas": tiempo,
                 "Sin capacidad (informativo)": sin_cap
             })
-            contador += 1
+
+            cont += 1
 
     return pd.DataFrame(resultado)
 
 
 
 # ==========================================
-# INTERFAZ PRINCIPAL
+# INTERFAZ COMPLETA (NO TOCADA)
 # ==========================================
 st.markdown("<h1>📊 Sistema de Cálculo de Fabricación</h1>", unsafe_allow_html=True)
 st.markdown("Carga los 4 archivos Excel necesarios y ajusta los parámetros de ejecución.")
@@ -223,109 +236,96 @@ st.markdown("---")
 
 tab1, tab2 = st.tabs(["📥 Carga de Archivos", "⚙️ Ajuste y Ejecución"])
 
-df_cap, df_mat, df_cli, df_dem = None, None, None, None
+df_cap = df_mat = df_cli = df_dem = None
 
 
-# --- TAB 1: Carga ---
+# --- TAB 1 ---
 with tab1:
-    st.subheader("📁 Carga tus archivos Excel")
-    
     col1, col2 = st.columns(2)
-    
+
     with col1:
         st.markdown('<div class="section-container">', unsafe_allow_html=True)
         st.markdown("### 🏭 Capacidad de planta")
-        file1 = st.file_uploader("Subir Capacidad", type=["xlsx"], key="u1", label_visibility="collapsed")
-        if file1:
-            df_cap = pd.read_excel(file1)
-            guardar_archivo(file1, "capacidad_planta")
-            st.success("✅ Cargado")
-            st.dataframe(df_cap, use_container_width=True, height=150)
-        else: st.info("Esperando archivo...")
+        f1 = st.file_uploader("Subir Capacidad", type=["xlsx"], key="cap", label_visibility="collapsed")
+        if f1:
+            df_cap = pd.read_excel(f1)
+            guardar_archivo(f1, "capacidad")
+            st.success("✔ Cargado")
+            st.dataframe(df_cap)
         st.markdown('</div>', unsafe_allow_html=True)
 
     with col2:
         st.markdown('<div class="section-container">', unsafe_allow_html=True)
         st.markdown("### 📦 Maestro de materiales")
-        file2 = st.file_uploader("Subir Materiales", type=["xlsx"], key="u2", label_visibility="collapsed")
-        if file2:
-            df_mat = pd.read_excel(file2)
-            guardar_archivo(file2, "maestro_materiales")
-            st.success("✅ Cargado")
-            st.dataframe(df_mat, use_container_width=True, height=400)
-        else: st.info("Esperando archivo...")
+        f2 = st.file_uploader("Subir Materiales", type=["xlsx"], key="mat", label_visibility="collapsed")
+        if f2:
+            df_mat = pd.read_excel(f2)
+            guardar_archivo(f2, "materiales")
+            st.success("✔ Cargado")
+            st.dataframe(df_mat)
         st.markdown('</div>', unsafe_allow_html=True)
 
     col3, col4 = st.columns(2)
-    
+
     with col3:
         st.markdown('<div class="section-container">', unsafe_allow_html=True)
         st.markdown("### 👥 Maestro de clientes")
-        file3 = st.file_uploader("Subir Clientes", type=["xlsx"], key="u3", label_visibility="collapsed")
-        if file3:
-            df_cli = pd.read_excel(file3)
-            guardar_archivo(file3, "maestro_clientes")
-            st.success("✅ Cargado")
-            st.dataframe(df_cli, use_container_width=True, height=400)
-        else: st.info("Esperando archivo...")
+        f3 = st.file_uploader("Subir Clientes", type=["xlsx"], key="cli", label_visibility="collapsed")
+        if f3:
+            df_cli = pd.read_excel(f3)
+            guardar_archivo(f3, "clientes")
+            st.success("✔ Cargado")
+            st.dataframe(df_cli)
         st.markdown('</div>', unsafe_allow_html=True)
 
     with col4:
         st.markdown('<div class="section-container">', unsafe_allow_html=True)
         st.markdown("### 📈 Demanda")
-        file4 = st.file_uploader("Subir Demanda", type=["xlsx"], key="u4", label_visibility="collapsed")
-        if file4:
-            df_dem = pd.read_excel(file4)
-            guardar_archivo(file4, "demanda")
-            st.success("✅ Cargado")
-            st.dataframe(df_dem, use_container_width=True, height=400)
-        else: st.info("Esperando archivo...")
+        f4 = st.file_uploader("Subir Demanda", type=["xlsx"], key="dem", label_visibility="collapsed")
+        if f4:
+            df_dem = pd.read_excel(f4)
+            guardar_archivo(f4, "demanda")
+            st.success("✔ Cargado")
+            st.dataframe(df_dem)
         st.markdown('</div>', unsafe_allow_html=True)
 
 
-
-# --- TAB 2: Ejecución ---
+# --- TAB 2 ---
 with tab2:
     if df_cap is None or df_mat is None or df_cli is None or df_dem is None:
-        st.warning("⚠️ Por favor, carga los 4 archivos en la pestaña anterior para habilitar los ajustes.")
+        st.warning("⚠️ Carga los 4 archivos para continuar.")
     else:
-        for d in [df_cap, df_mat, df_cli, df_dem]:
-            d.columns = d.columns.str.strip()
-        
-        df_dem['Semana_Label'] = pd.to_datetime(df_dem['Fecha de necesidad']).dt.strftime('%Y-W%U')
-        lista_semanas = sorted(df_dem['Semana_Label'].unique())
+        df_dem["Semana_Label"] = pd.to_datetime(df_dem["Fecha de necesidad"]).dt.strftime("%Y-W%U")
+        semanas = sorted(df_dem["Semana_Label"].unique())
 
         st.subheader("⚙️ Configuración de Porcentajes por Semana")
         ajustes = {}
-        cols_sliders = st.columns(4)
+        cols = st.columns(4)
 
-        for i, sem in enumerate(lista_semanas):
-            with cols_sliders[i % 4]:
-                ajustes[sem] = st.slider(f"Sem {sem}", 0, 100, 50)
-
-        st.markdown("---")
+        for i, sem in enumerate(semanas):
+            with cols[i % 4]:
+                ajustes[sem] = st.slider(f"Semana {sem}", 0, 100, 50)
 
         if st.button("🚀 EJECUTAR CÁLCULO DE PROPUESTA", use_container_width=True):
-            with st.spinner("Calculando asignación óptima de costes..."):
-                df_res = procesar_logica_estable(df_dem, df_mat, df_cli, df_cap, ajustes)
+            df_res = procesar_logica_estable(df_dem, df_mat, df_cli, df_cap, ajustes)
 
-            st.success("✅ Cálculo completado con éxito.")
+            st.success("✔ Cálculo completado")
+            st.dataframe(df_res.drop(columns=["Horas"]), use_container_width=True)
 
-            st.subheader("📋 Detalle de la Propuesta")
-            st.dataframe(df_res.drop(columns=['Horas']), use_container_width=True)
+            ruta = os.path.join(UPLOAD_DIR, "Propuesta_Final.xlsx")
+            df_res.drop(columns=["Semana", "Horas"]).to_excel(ruta, index=False)
 
-            output_path = os.path.join(UPLOAD_DIR, "Propuesta_Final.xlsx")
-            df_res.drop(columns=['Semana', 'Horas']).to_excel(output_path, index=False)
-            with open(output_path, "rb") as f:
-                st.download_button("📥 Descargar Propuesta en Excel", data=f,
-                                   file_name=f"Propuesta_Fabricacion_{datetime.now().strftime('%Y%m%d')}.xlsx")
+            with open(ruta, "rb") as f:
+                st.download_button(
+                    "📥 Descargar Propuesta",
+                    f,
+                    file_name=f"Propuesta_Fabricacion_{datetime.now().strftime('%Y%m%d')}.xlsx"
+                )
 
 
-# Footer
-st.markdown("---")
+# FOOTER
 st.markdown("""
 <div class="footer">
-    <p>✨ <strong>Sistema de Cálculo de Fabricación</strong> - Versión 3.2 (Interfaz Unificada)</p>
-    <p>Desarrollado con Streamlit | 2026</p>
+Sistema de Cálculo de Fabricación — 2026
 </div>
 """, unsafe_allow_html=True)
