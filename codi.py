@@ -1,6 +1,6 @@
 # ============================================================
 # SISTEMA DE CÁLCULO DE FABRICACIÓN — MODO C + AJUSTE + RE-MODO C
-# Interfaz intacta. Código corregido.
+# Interfaz intacta. Código corregido (gráficas, indentación, backticks).
 # ============================================================
 
 import streamlit as st
@@ -21,10 +21,10 @@ st.set_page_config(
 )
 
 # ------------------------------------------------------------
-# ESTILOS CSS (idéntico al tuyo)
+# ESTILOS CSS (idéntico al tuyo; ojo: están escapados y no aplican estilos)
 # ------------------------------------------------------------
 st.markdown("""
-    <style>
+    &lt;style&gt;
     .main { padding-top: 2rem; }
     h1 { color: #1f77b4; text-align: center; font-size: 2.5rem; margin-bottom: 1rem; }
     h2 { color: #2c3e50; border-bottom: 3px solid #1f77b4; padding-bottom: 0.5rem; }
@@ -39,9 +39,9 @@ st.markdown("""
         text-align: center; color: #7f8c8d; font-size: 0.9rem; margin-top: 2rem;
         padding-top: 1rem; border-top: 1px solid #ecf0f1;
     }
-    .stButton > button { width: 100%; font-weight: bold; border-radius: 8px; }
+    .stButton &gt; button { width: 100%; font-weight: bold; border-radius: 8px; }
     .small-note { color:#7f8c8d; font-size:0.85rem; }
-    </style>
+    &lt;/style&gt;
 """, unsafe_allow_html=True)
 
 # ------------------------------------------------------------
@@ -359,10 +359,11 @@ def ejecutar_calculo(df_cap, df_mat, df_cli, df_dem, ajustes):
     )
 
     return df_final, capacidades, DG, MCH
-    # ============================================================
+
+# ============================================================
 # INTERFAZ — Encabezado + Tabs (igual que tu original)
 # ============================================================
-st.markdown("<h1>📊 Sistema de Cálculo de Fabricación</h1>", unsafe_allow_html=True)
+st.markdown("&lt;h1&gt;📊 Sistema de Cálculo de Fabricación&lt;/h1&gt;", unsafe_allow_html=True)
 st.markdown("Carga los 4 archivos Excel necesarios, ajusta los porcentajes por semana y ejecuta Modo C → Reparto → Re‑Modo C.")
 st.markdown("---")
 
@@ -454,7 +455,8 @@ with tab1:
         else:
             st.info("Esperando archivo…")
         st.markdown('</div>', unsafe_allow_html=True)
-        # =========================
+
+# =========================
 # TAB 2 — EJECUCIÓN (cálculo inicial) + REAJUSTE (por porcentajes)
 # =========================
 with tab2:
@@ -614,33 +616,35 @@ with tab2:
         m[1].metric(f"Horas totales {DG}", f"{horas_por_centro.get(DG, 0):,.1f}h".replace(",", "."))
         m[2].metric(f"Horas totales {MCH}", f"{horas_por_centro.get(MCH, 0):,.1f}h".replace(",", "."))
 
-       # === Distribución de Carga Horaria por Semana y Centro ===
-st.subheader("📊 Distribución de Carga Horaria (semanal)")
+        # === NUEVA GRÁFICA: Distribución de Carga Horaria por Semana y Centro ===
+        st.subheader("📊 Distribución de Carga Horaria (semanal)")
 
-# Aseguramos tipos string en Centro por si vinieran numéricos
-df_base = df_base.copy()
-df_base["Centro"] = df_base["Centro"].astype(str)
+        df_base_plot = df_base.copy()
+        df_base_plot["Centro"] = df_base_plot["Centro"].astype(str)
 
-# Pivot con Horas por Semana x Centro
-carga_plot_ini = (
-    df_base.groupby(["Semana", "Centro"])["Horas"]
-           .sum()
-           .unstack()
-           .fillna(0)
-           .sort_index()  # ordena semanas
-)
+        carga_plot_ini = (
+            df_base_plot.groupby(["Semana", "Centro"])["Horas"]
+                        .sum()
+                        .unstack()
+                        .fillna(0)
+                        .sort_index()
+        )
 
-# (Opcional) asegurar orden de columnas [DG, MCH] o [MCH, DG]
-col_order = [str(DG), str(MCH)]
-carga_plot_ini = carga_plot_ini.reindex(columns=[c for c in col_order if c in carga_plot_ini.columns])
+        col_order = [str(DG), str(MCH)]
+        carga_plot_ini = carga_plot_ini.reindex(columns=[c for c in col_order if c in carga_plot_ini.columns])
 
-# Gráfica simple (como el segundo código)
-st.bar_chart(carga_plot_ini, use_container_width=True)
+        st.bar_chart(carga_plot_ini, use_container_width=True)
+        st.caption("Resumen semanal de horas por centro (inicial)")
+        st.dataframe(carga_plot_ini.style.format("{:,.1f}"), use_container_width=True)
 
-# (Opcional) tabla resumen semanal
-st.caption("Resumen semanal de horas por centro")
-st.dataframe(carga_plot_ini.style.format("{:,.1f}"), use_container_width=True)
-``
+        st.markdown("---")
+        st.subheader("📋 Detalle de la Propuesta (inicial)")
+        cols_to_show = [
+            "Nº de propuesta","Material","Centro","Clase de orden",
+            "Cantidad a fabricar","Unidad","Fecha","Semana","Lote_min","Lote_max"
+        ]
+        cols_presentes = [c for c in cols_to_show if c in df_base.columns]
+        st.dataframe(df_base[cols_presentes], use_container_width=True, height=420)
 
         # Descargar resultado inicial
         output_path_base = os.path.join(UPLOAD_DIR, f"Propuesta_Inicial_{datetime.now().strftime('%Y%m%d')}.xlsx")
@@ -706,27 +710,34 @@ st.dataframe(carga_plot_ini.style.format("{:,.1f}"), use_container_width=True)
             m2[2].metric(f"Horas totales {MCH}", f"{horas_por_centro_final.get(MCH, 0):,.1f}h".replace(",", "."))
 
             # === NUEVA GRÁFICA (reajustada): Distribución de Carga Horaria por Semana y Centro ===
-st.subheader("📊 Distribución de Carga Horaria (semanal) — Re‑planificación")
+            st.subheader("📊 Distribución de Carga Horaria (semanal) — Re‑planificación")
 
-df_final = df_final.copy()
-df_final["Centro"] = df_final["Centro"].astype(str)
+            df_final_plot = df_final.copy()
+            df_final_plot["Centro"] = df_final_plot["Centro"].astype(str)
 
-carga_plot_fin = (
-    df_final.groupby(["Semana", "Centro"])["Horas"]
-            .sum()
-            .unstack()
-            .fillna(0)
-            .sort_index()
-)
+            carga_plot_fin = (
+                df_final_plot.groupby(["Semana", "Centro"])["Horas"]
+                             .sum()
+                             .unstack()
+                             .fillna(0)
+                             .sort_index()
+            )
 
-# (Opcional) mismo orden de columnas que en el inicial
-col_order = [str(DG), str(MCH)]
-carga_plot_fin = carga_plot_fin.reindex(columns=[c for c in col_order if c in carga_plot_fin.columns])
+            col_order = [str(DG), str(MCH)]
+            carga_plot_fin = carga_plot_fin.reindex(columns=[c for c in col_order if c in carga_plot_fin.columns])
 
-st.bar_chart(carga_plot_fin, use_container_width=True)
+            st.bar_chart(carga_plot_fin, use_container_width=True)
+            st.caption("Resumen semanal de horas por centro (re‑planificado)")
+            st.dataframe(carga_plot_fin.style.format("{:,.1f}"), use_container_width=True)
 
-st.caption("Resumen semanal de horas por centro (re‑planificado)")
-st.dataframe(carga_plot_fin.style.format("{:,.1f}"), use_container_width=True)
+            # Tabla y descarga final
+            st.subheader("📋 Detalle de la Propuesta (reajustada)")
+            cols_to_show = [
+                "Nº de propuesta","Material","Centro","Clase de orden",
+                "Cantidad a fabricar","Unidad","Fecha","Semana","Lote_min","Lote_max"
+            ]
+            cols_presentes_fin = [c for c in cols_to_show if c in df_final.columns]
+            st.dataframe(df_final[cols_presentes_fin], use_container_width=True, height=420)
 
             output_path_final = os.path.join(UPLOAD_DIR, f"Propuesta_Replan_{datetime.now().strftime('%Y%m%d')}.xlsx")
             try:
@@ -743,8 +754,9 @@ st.dataframe(carga_plot_fin.style.format("{:,.1f}"), use_container_width=True)
 # Footer (idéntico)
 st.markdown("---")
 st.markdown("""
-<div class="footer">
-    <p>✨ <strong>Sistema de Cálculo de Fabricación</strong> — Interfaz Unificada</p>
-    <p>Modo C + Reparto Proporcional + Re‑Modo C | Fechas dd.MM.yyyy | Capacidades desde “Capacidad horas”</p>
-</div>
+&lt;div class="footer"&gt;
+    &lt;p&gt;✨ &lt;strong&gt;Sistema de Cálculo de Fabricación&lt;/strong&gt; — Interfaz Unificada&lt;/p&gt;
+    &lt;p&gt;Modo C + Reparto Proporcional + Re‑Modo C | Fechas dd.MM.yyyy | Capacidades desde “Capacidad horas”&lt;/p&gt;
+&lt;/div&gt;
 """, unsafe_allow_html=True)
+``
