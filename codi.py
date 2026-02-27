@@ -614,21 +614,33 @@ with tab2:
         m[1].metric(f"Horas totales {DG}", f"{horas_por_centro.get(DG, 0):,.1f}h".replace(",", "."))
         m[2].metric(f"Horas totales {MCH}", f"{horas_por_centro.get(MCH, 0):,.1f}h".replace(",", "."))
 
-        # === ÚNICO GRÁFICO: Producción por centro (Horas) — Solo 0184 vs 0833 ===
-        st.subheader("📊 Producción por centro (Horas) — Solo 0184 vs 0833")
-        resumen_ini = pd.Series({
-            str(MCH): float(horas_por_centro.get(MCH, 0.0)),
-            str(DG): float(horas_por_centro.get(DG, 0.0))
-        }, name="Horas").to_frame()
-        st.bar_chart(resumen_ini, use_container_width=True)
+       # === Distribución de Carga Horaria por Semana y Centro ===
+st.subheader("📊 Distribución de Carga Horaria (semanal)")
 
-        st.markdown("---")
-        st.subheader("📋 Detalle de la Propuesta (inicial)")
-        cols_to_show = ["Nº de propuesta","Material","Centro","Clase de orden",
-                        "Cantidad a fabricar","Unidad","Fecha","Semana",
-                        "Lote_min","Lote_max"]
-        cols_presentes = [c for c in cols_to_show if c in df_base.columns]
-        st.dataframe(df_base[cols_presentes], use_container_width=True, height=420)
+# Aseguramos tipos string en Centro por si vinieran numéricos
+df_base = df_base.copy()
+df_base["Centro"] = df_base["Centro"].astype(str)
+
+# Pivot con Horas por Semana x Centro
+carga_plot_ini = (
+    df_base.groupby(["Semana", "Centro"])["Horas"]
+           .sum()
+           .unstack()
+           .fillna(0)
+           .sort_index()  # ordena semanas
+)
+
+# (Opcional) asegurar orden de columnas [DG, MCH] o [MCH, DG]
+col_order = [str(DG), str(MCH)]
+carga_plot_ini = carga_plot_ini.reindex(columns=[c for c in col_order if c in carga_plot_ini.columns])
+
+# Gráfica simple (como el segundo código)
+st.bar_chart(carga_plot_ini, use_container_width=True)
+
+# (Opcional) tabla resumen semanal
+st.caption("Resumen semanal de horas por centro")
+st.dataframe(carga_plot_ini.style.format("{:,.1f}"), use_container_width=True)
+``
 
         # Descargar resultado inicial
         output_path_base = os.path.join(UPLOAD_DIR, f"Propuesta_Inicial_{datetime.now().strftime('%Y%m%d')}.xlsx")
@@ -693,18 +705,28 @@ with tab2:
             m2[1].metric(f"Horas totales {DG}", f"{horas_por_centro_final.get(DG, 0):,.1f}h".replace(",", "."))
             m2[2].metric(f"Horas totales {MCH}", f"{horas_por_centro_final.get(MCH, 0):,.1f}h".replace(",", "."))
 
-            # ÚNICO GRÁFICO actualizado
-            st.markdown("**Gráfico (actualizado)** — Producción por centro (Horas):")
-            resumen_fin = pd.Series({
-                str(MCH): float(horas_por_centro_final.get(MCH, 0.0)),
-                str(DG): float(horas_por_centro_final.get(DG, 0.0))
-            }, name="Horas").to_frame()
-            st.bar_chart(resumen_fin, use_container_width=True)
+            # === NUEVA GRÁFICA (reajustada): Distribución de Carga Horaria por Semana y Centro ===
+st.subheader("📊 Distribución de Carga Horaria (semanal) — Re‑planificación")
 
-            # Tabla y descarga final
-            st.subheader("📋 Detalle de la Propuesta (reajustada)")
-            cols_presentes_fin = [c for c in cols_to_show if c in df_final.columns]
-            st.dataframe(df_final[cols_presentes_fin], use_container_width=True, height=420)
+df_final = df_final.copy()
+df_final["Centro"] = df_final["Centro"].astype(str)
+
+carga_plot_fin = (
+    df_final.groupby(["Semana", "Centro"])["Horas"]
+            .sum()
+            .unstack()
+            .fillna(0)
+            .sort_index()
+)
+
+# (Opcional) mismo orden de columnas que en el inicial
+col_order = [str(DG), str(MCH)]
+carga_plot_fin = carga_plot_fin.reindex(columns=[c for c in col_order if c in carga_plot_fin.columns])
+
+st.bar_chart(carga_plot_fin, use_container_width=True)
+
+st.caption("Resumen semanal de horas por centro (re‑planificado)")
+st.dataframe(carga_plot_fin.style.format("{:,.1f}"), use_container_width=True)
 
             output_path_final = os.path.join(UPLOAD_DIR, f"Propuesta_Replan_{datetime.now().strftime('%Y%m%d')}.xlsx")
             try:
