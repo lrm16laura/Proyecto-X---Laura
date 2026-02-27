@@ -1,6 +1,6 @@
 # ============================================================
 # SISTEMA DE CÁLCULO DE FABRICACIÓN — Planificación con ajuste semanal
-# Versión 3 (título centrado por columnas, footer Versión 3, semanas ISO con "W")
+# Versión 3 (título y subtítulo centrados en página, footer Versión 3)
 # ============================================================
 
 import streamlit as st
@@ -20,7 +20,7 @@ st.set_page_config(
 )
 
 # ------------------------------------------------------------
-# ESTILOS CSS (limpio; el centrado del título se hace por columnas)
+# ESTILOS CSS (limpio; el centrado se hace con contenedores)
 # ------------------------------------------------------------
 st.markdown("""
 <style>
@@ -33,14 +33,6 @@ h2 { color: #2c3e50; border-bottom: 3px solid #1f77b4; padding-bottom: 0.5rem; }
     border-radius: 10px;
     border-left: 5px solid #1f77b4;
     margin-bottom: 1.5rem;
-}
-
-/* Subtítulo bajo el título */
-.subtitle {
-    text-align: center;
-    font-size: 1.05rem;
-    color: #2c3e50;
-    margin-bottom: .5rem;
 }
 
 /* Footer centrado */
@@ -89,7 +81,7 @@ def to_float_safe(v, default=0.0):
 def norm_code(code):
     s = str(code).strip()
     if s.endswith(".0"): s = s[:-2]
-    digits = "".join(ch for ch in s if ch.isdigit())
+    digits = "".join(ch for ch in s if s and ch.isdigit())
     if digits == "": return s
     if len(digits) < 4:
         digits = digits.zfill(4)
@@ -234,7 +226,7 @@ def modo_C(df_agr, df_mat, capacidades, DG_code, MCH_code):
                         "Cantidad a fabricar": round(p,2),
                         "Unidad": r["Unidad"],
                         "Fecha": fecha.strftime("%d.%m.%Y"),
-                        "Semana": semana,          # se mantiene interna
+                        "Semana": semana,          # (se usa internamente)
                         "Lote_min": lote_min,
                         "Lote_max": lote_max
                     })
@@ -267,19 +259,22 @@ def modo_C(df_agr, df_mat, capacidades, DG_code, MCH_code):
     return pd.DataFrame(out)
 
 # ------------------------------------------------------------
-# ENCABEZADO — Título centrado por columnas
+# ENCABEZADO — Título y subtítulo centrados en la página
 # ------------------------------------------------------------
-c1, c2, c3 = st.columns([1, 8, 1])
-with c2:
-    st.markdown('<h1>📊 Sistema de Cálculo de Fabricación</h1>', unsafe_allow_html=True)
-    st.markdown(
-        '<p class="subtitle">'
-        'Carga los 4 archivos Excel necesarios, se ejecutará una primera planificación, '
-        'y en caso de ser necesario, ajusta los porcentajes por semana y genera la planificación completa.'
-        '</p>',
-        unsafe_allow_html=True
-    )
-
+st.markdown(
+    """
+    <div style="width:100%;display:flex;justify-content:center;">
+        <div style="max-width:1000px;width:100%;text-align:center;">
+            <h1 style="color:#1f77b4;margin-bottom:0.6rem;">📊 Sistema de Cálculo de Fabricación</h1>
+            <p style="color:#2c3e50;font-size:1.05rem;line-height:1.45;margin:.2rem 0 0 0;padding:0 12px;">
+                Carga los 4 archivos Excel necesarios, se ejecutará una primera planificación,
+                y en caso de ser necesario, ajusta los porcentajes por semana y genera la planificación completa.
+            </p>
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
 st.markdown("---")
 
 # ============================================================
@@ -392,13 +387,13 @@ with tab2:
         d.columns = d.columns.str.strip()
 
     # -----------------------------
-    # Función local: Generación inicial (usa el planificador por lotes)
+    # Generación inicial (usa el planificador por lotes)
     # -----------------------------
     def ejecutar_modoC_base(df_cap, df_mat, df_cli, df_dem):
         capacidades = leer_capacidades(df_cap)
         DG_code, MCH_code, _ = detectar_centros_desde_capacidades(capacidades)
 
-        # Normalización fechas y semana (ISO con 'W')
+        # Fechas y semana ISO
         df_dem = df_dem.copy()
         df_dem["Fecha_DT"] = pd.to_datetime(df_dem["Fecha de necesidad"])
         iso = df_dem["Fecha_DT"].dt.isocalendar()
@@ -443,7 +438,7 @@ with tab2:
         g["Lote_min"] = g["Tamaño lote mínimo"]
         g["Lote_max"] = g["Tamaño lote máximo"]
 
-        # Generación inicial de propuestas (planificador por lotes con capacidad)
+        # Propuestas (planificador por lotes con capacidad)
         df_c = modo_C(
             df_agr=g[["Material","Unidad","Centro","Cantidad","Fecha","Semana","Lote_min","Lote_max"]],
             df_mat=df_mat,
@@ -463,10 +458,9 @@ with tab2:
         return df_c, capacidades, DG_code, MCH_code
 
     # -----------------------------
-    # Función local: Reajuste semanal + Replanificación
+    # Reajuste semanal + Replanificación
     # -----------------------------
     def replanificar_con_porcentajes(df_base, df_mat, capacidades, DG_code, MCH_code, ajustes):
-        # 1) Reparto por semana (en HORAS)
         df_repartido = []
         for sem in sorted(df_base["Semana"].dropna().astype(str).unique().tolist()):
             df_sem = df_base[df_base["Semana"].astype(str) == sem].copy()
@@ -478,13 +472,12 @@ with tab2:
 
         df_adj = pd.concat(df_repartido, ignore_index=True) if df_repartido else df_base.copy()
 
-        # 2) Replanificación
         df_adj_pre = df_adj.rename(columns={"Cantidad a fabricar":"Cantidad"})[
             ["Material","Unidad","Centro","Cantidad","Fecha","Semana","Lote_min","Lote_max"]
         ]
         df_final = modo_C(df_adj_pre, df_mat, capacidades, DG_code, MCH_code)
 
-        # 3) Recalcular Horas
+        # Recalcular Horas
         tiempos = df_mat[["Material","Unidad","Tiempo fabricación unidad DG","Tiempo fabricación unidad MCH"]].drop_duplicates()
         df_final = df_final.merge(tiempos, on=["Material","Unidad"], how="left")
         df_final["Horas"] = np.where(
@@ -492,7 +485,6 @@ with tab2:
             df_final["Cantidad a fabricar"] * df_final["Tiempo fabricación unidad DG"],
             df_final["Cantidad a fabricar"] * df_final["Tiempo fabricación unidad MCH"]
         )
-
         return df_final
 
     # -----------------------------
