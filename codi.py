@@ -1,6 +1,6 @@
 # ============================================================
 # SISTEMA DE CÁLCULO DE FABRICACIÓN — MODO C + AJUSTE + RE-MODO C
-# Interfaz intacta. Código corregido (gráficas, indentación, backticks).
+# Interfaz intacta. Código corregido (gráficas, indentación, sin backticks).
 # ============================================================
 
 import streamlit as st
@@ -759,4 +759,3 @@ st.markdown("""
     &lt;p&gt;Modo C + Reparto Proporcional + Re‑Modo C | Fechas dd.MM.yyyy | Capacidades desde “Capacidad horas”&lt;/p&gt;
 &lt;/div&gt;
 """, unsafe_allow_html=True)
-``
