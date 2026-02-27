@@ -1,6 +1,6 @@
 # ============================================================
 # SISTEMA DE CÁLCULO DE FABRICACIÓN — Planificación con ajuste semanal
-# Versión 3 (UI limpia, título centrado, footer centrado, semanas ISO con "W")
+# Versión 3 (título centrado por columnas, footer Versión 3, semanas ISO con "W")
 # ============================================================
 
 import streamlit as st
@@ -8,7 +8,6 @@ import pandas as pd
 import numpy as np
 import os
 from datetime import datetime, timedelta
-import altair as alt
 
 # ------------------------------------------------------------
 # CONFIGURACIÓN DE PÁGINA
@@ -21,31 +20,11 @@ st.set_page_config(
 )
 
 # ------------------------------------------------------------
-# ESTILOS CSS (activado — título y footer centrados)
+# ESTILOS CSS (limpio; el centrado del título se hace por columnas)
 # ------------------------------------------------------------
 st.markdown("""
 <style>
 .main { padding-top: 2rem; }
-
-/* Título centrado */
-h1 { 
-    color: #1f77b4; 
-    text-align: center;
-    font-size: 2.5rem; 
-    margin-bottom: 1rem; 
-    display:flex; 
-    align-items:center; 
-    justify-content:center;
-    gap:.6rem;
-}
-
-/* Subtítulo (bajo el título) */
-.subtitle {
-    text-align: center;
-    font-size: 1.05rem;
-    color: #2c3e50;
-    margin-bottom: .5rem;
-}
 
 h2 { color: #2c3e50; border-bottom: 3px solid #1f77b4; padding-bottom: 0.5rem; }
 .section-container {
@@ -54,6 +33,14 @@ h2 { color: #2c3e50; border-bottom: 3px solid #1f77b4; padding-bottom: 0.5rem; }
     border-radius: 10px;
     border-left: 5px solid #1f77b4;
     margin-bottom: 1.5rem;
+}
+
+/* Subtítulo bajo el título */
+.subtitle {
+    text-align: center;
+    font-size: 1.05rem;
+    color: #2c3e50;
+    margin-bottom: .5rem;
 }
 
 /* Footer centrado */
@@ -81,9 +68,10 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 # UTILIDADES
 # ------------------------------------------------------------
 def guardar_archivo(archivo, nombre):
+    """Guarda el archivo con nombre legible (sin guiones bajos)."""
     if archivo is not None:
         t = datetime.now().strftime("%Y%m%d_%H%M%S")
-        p = os.path.join(UPLOAD_DIR, f"{nombre}_{t}.xlsx")
+        p = os.path.join(UPLOAD_DIR, f"{nombre} {t}.xlsx")  # sin "_"
         with open(p, "wb") as f:
             f.write(archivo.getbuffer())
         return p
@@ -108,18 +96,10 @@ def norm_code(code):
     return digits
 
 def semana_iso_str_from_ts(ts: pd.Timestamp) -> str:
-    """Devuelve semana ISO como 'YYYY-Www'."""
+    """Devuelve semana ISO como 'YYYY-Www' (lunes-domingo)."""
     iso = ts.isocalendar()
     return f"{int(iso.year)}-W{int(iso.week):02d}"
 
-def semana_iso_str_from_date(dtobj) -> str:
-    """Para objetos datetime.date/datetime, devuelve 'YYYY-Www'."""
-    ts = pd.to_datetime(dtobj)
-    return semana_iso_str_from_ts(ts)
-
-# ------------------------------------------------------------
-# DETECTAR COLUMNA CLIENTE
-# ------------------------------------------------------------
 def detectar_columna_cliente(df):
     posibles = [
         "cliente","client","customer",
@@ -133,9 +113,6 @@ def detectar_columna_cliente(df):
                 return orig
     return None
 
-# ------------------------------------------------------------
-# LECTURA DE CAPACIDADES
-# ------------------------------------------------------------
 def leer_capacidades(df_cap):
     if "Centro" not in df_cap.columns:
         st.error("❌ Falta la columna 'Centro' en Capacidad")
@@ -154,21 +131,14 @@ def leer_capacidades(df_cap):
     capacidades = {}
     for _, r in df_cap.iterrows():
         capacidades[norm_code(r["Centro"])] = to_float_safe(r[cap_col], 0)
-
     return capacidades
 
-# ------------------------------------------------------------
-# DETECTAR DG Y MCH
-# ------------------------------------------------------------
 def detectar_centros_desde_capacidades(capacidades):
     keys = list(capacidades.keys())
     DG = next((k for k in keys if k.endswith("833")), keys[0])
     MCH = next((k for k in keys if k.endswith("184")), keys[-1])
     return DG, MCH, keys
 
-# ------------------------------------------------------------
-# REPARTO POR SEMANA
-# ------------------------------------------------------------
 def repartir_porcentaje(df_semana, pct_dg, dg, mch):
     if pct_dg <= 0:
         df_semana["Centro"] = mch
@@ -207,7 +177,6 @@ def modo_C(df_agr, df_mat, capacidades, DG_code, MCH_code):
     df = df_agr.merge(tiempos, on=["Material","Unidad"], how="left")
 
     capacidad_restante = {}
-
     def get_cap(centro, fecha):
         key = (centro, fecha)
         if key not in capacidad_restante:
@@ -215,10 +184,7 @@ def modo_C(df_agr, df_mat, capacidades, DG_code, MCH_code):
         return capacidad_restante[key]
 
     def consume(centro, fecha, h):
-        nuevo = get_cap(centro, fecha) - h
-        if nuevo < 0 and abs(nuevo) < 1e-9:
-            nuevo = 0.0
-        capacidad_restante[(centro, fecha)] = nuevo
+        capacidad_restante[(centro, fecha)] = max(0.0, get_cap(centro, fecha) - h)
 
     def horas_nec(centro, qty, r):
         tu = r["Tiempo fabricación unidad DG"] if centro == DG_code else r["Tiempo fabricación unidad MCH"]
@@ -236,8 +202,6 @@ def modo_C(df_agr, df_mat, capacidades, DG_code, MCH_code):
     for _, r in df.iterrows():
         centro = norm_code(r["Centro"])
         fecha = pd.to_datetime(r["Fecha"]).normalize()
-
-        # Semana ISO de la fecha inicial
         semana = semana_iso_str_from_ts(fecha)
 
         cantidad = to_float_safe(r.get("Cantidad", 0), 0)
@@ -270,24 +234,21 @@ def modo_C(df_agr, df_mat, capacidades, DG_code, MCH_code):
                         "Cantidad a fabricar": round(p,2),
                         "Unidad": r["Unidad"],
                         "Fecha": fecha.strftime("%d.%m.%Y"),
-                        "Semana": semana,              # mantiene ISO con 'W'
+                        "Semana": semana,          # se mantiene interna
                         "Lote_min": lote_min,
                         "Lote_max": lote_max
                     })
                     contador += 1
                     p = 0
-
                 else:
                     posible = cant_por_cap(centro, cap, r)
                     if posible <= 0:
                         fecha += timedelta(days=1)
-                        # Recalcular semana ISO cuando cambia el día
                         semana = semana_iso_str_from_ts(fecha)
                         continue
 
                     hprod = horas_nec(centro, posible, r)
                     consume(centro, fecha, hprod)
-
                     out.append({
                         "Nº de propuesta": contador,
                         "Material": r["Material"],
@@ -296,7 +257,7 @@ def modo_C(df_agr, df_mat, capacidades, DG_code, MCH_code):
                         "Cantidad a fabricar": round(posible,2),
                         "Unidad": r["Unidad"],
                         "Fecha": fecha.strftime("%d.%m.%Y"),
-                        "Semana": semana,              # mantiene ISO con 'W'
+                        "Semana": semana,
                         "Lote_min": lote_min,
                         "Lote_max": lote_max
                     })
@@ -306,116 +267,24 @@ def modo_C(df_agr, df_mat, capacidades, DG_code, MCH_code):
     return pd.DataFrame(out)
 
 # ------------------------------------------------------------
-# EJECUCIÓN COMPLETA (no usada directamente en UI, pero actualizada)
+# ENCABEZADO — Título centrado por columnas
 # ------------------------------------------------------------
-def ejecutar_calculo(df_cap, df_mat, df_cli, df_dem, ajustes):
-    capacidades = leer_capacidades(df_cap)
-    DG, MCH, _ = detectar_centros_desde_capacidades(capacidades)
-
-    df_dem = df_dem.copy()
-    df_dem["Fecha_DT"] = pd.to_datetime(df_dem["Fecha de necesidad"])
-    # Semana ISO con 'W'
-    iso = df_dem["Fecha_DT"].dt.isocalendar()
-    df_dem["Semana_Label"] = iso["year"].astype(str) + "-W" + iso["week"].astype(str).str.zfill(2)
-
-    col_cli_dem = detectar_columna_cliente(df_dem)
-    col_cli_cli = detectar_columna_cliente(df_cli)
-    if not col_cli_dem or not col_cli_cli:
-        st.error("❌ No se encontró columna de cliente en Demanda o Clientes.")
-        st.stop()
-
-    df = df_dem.merge(df_mat, on=["Material","Unidad"], how="left")
-    df = df.merge(df_cli, left_on=col_cli_dem, right_on=col_cli_cli, how="left")
-
-    # Decisión por coste
-    COL_COST_DG = next((c for c in df.columns if "dg" in c.lower() and "cost" in c.lower()), None)
-    COL_COST_MCH = next((c for c in df.columns if "mch" in c.lower() and "cost" in c.lower()), None)
-
-    def decidir(r):
-        c1 = to_float_safe(r.get(COL_COST_DG,0))
-        c2 = to_float_safe(r.get(COL_COST_MCH,0))
-        return DG if c1 < c2 else MCH
-
-    df["Centro_Base"] = df.apply(decidir, axis=1)
-
-    g = df.groupby(
-        ["Material","Unidad","Centro_Base","Fecha de necesidad","Semana_Label"], dropna=False
-    ).agg({
-        "Cantidad":"sum",
-        "Tamaño lote mínimo":"first",
-        "Tamaño lote máximo":"first"
-    }).reset_index()
-
-    g = g.rename(columns={
-        "Centro_Base":"Centro",
-        "Fecha de necesidad":"Fecha",
-        "Semana_Label":"Semana"
-    })
-
-    g["Centro"] = g["Centro"].apply(norm_code)
-    g["Lote_min"] = g["Tamaño lote mínimo"]
-    g["Lote_max"] = g["Tamaño lote máximo"]
-
-    df_c = modo_C(
-        g[["Material","Unidad","Centro","Cantidad","Fecha","Semana","Lote_min","Lote_max"]],
-        df_mat,
-        capacidades,
-        DG, MCH
+c1, c2, c3 = st.columns([1, 8, 1])
+with c2:
+    st.markdown('<h1>📊 Sistema de Cálculo de Fabricación</h1>', unsafe_allow_html=True)
+    st.markdown(
+        '<p class="subtitle">'
+        'Carga los 4 archivos Excel necesarios, se ejecutará una primera planificación, '
+        'y en caso de ser necesario, ajusta los porcentajes por semana y genera la planificación completa.'
+        '</p>',
+        unsafe_allow_html=True
     )
 
-    tiempos = df_mat[[
-        "Material","Unidad",
-        "Tiempo fabricación unidad DG",
-        "Tiempo fabricación unidad MCH"
-    ]]
-
-    df_c = df_c.merge(tiempos, on=["Material","Unidad"], how="left")
-
-    df_c["Horas"] = np.where(
-        df_c["Centro"] == DG,
-        df_c["Cantidad a fabricar"] * df_c["Tiempo fabricación unidad DG"],
-        df_c["Cantidad a fabricar"] * df_c["Tiempo fabricación unidad MCH"]
-    )
-
-    # ---- Ajuste por semana ----
-    df_rep = []
-    for sem in sorted(df_c["Semana"].dropna().astype(str).unique()):
-        df_sem = df_c[df_c["Semana"].astype(str) == sem].copy()
-        pct = ajustes.get(sem, 50)
-        df_sem = repartir_porcentaje(df_sem, pct, DG, MCH)
-        df_rep.append(df_sem)
-
-    df_adj = pd.concat(df_rep, ignore_index=True)
-
-    df_adj_pre = df_adj.rename(columns={"Cantidad a fabricar":"Cantidad"})[
-        ["Material","Unidad","Centro","Cantidad","Fecha","Semana","Lote_min","Lote_max"]
-    ]
-
-    df_final = modo_C(df_adj_pre, df_mat, capacidades, DG, MCH)
-
-    df_final = df_final.merge(tiempos, on=["Material","Unidad"], how="left")
-
-    df_final["Horas"] = np.where(
-        df_final["Centro"] == DG,
-        df_final["Cantidad a fabricar"] * df_final["Tiempo fabricación unidad DG"],
-        df_final["Cantidad a fabricar"] * df_final["Tiempo fabricación unidad MCH"]
-    )
-
-    return df_final, capacidades, DG, MCH
-
-# ============================================================
-# INTERFAZ — Encabezado + Tabs
-# ============================================================
-st.markdown('<h1>📊 Sistema de Cálculo de Fabricación</h1>', unsafe_allow_html=True)
-st.markdown(
-    '<p class="subtitle">'
-    'Carga los 4 archivos Excel necesarios, se ejecutará una primera planificación, '
-    'y en caso de ser necesario, ajusta los porcentajes por semana y genera la planificación completa.'
-    '</p>',
-    unsafe_allow_html=True
-)
 st.markdown("---")
 
+# ============================================================
+# TABS
+# ============================================================
 tab1, tab2 = st.tabs(["📥 Carga de Archivos", "⚙️ Ajuste y Ejecución"])
 
 # Variables de estado
@@ -437,7 +306,7 @@ with tab1:
         if f1:
             try:
                 df_cap = pd.read_excel(f1)
-                guardar_archivo(f1, "capacidad_planta")
+                guardar_archivo(f1, "Capacidad planta")
                 st.session_state.df_cap = df_cap.copy()
                 st.success("✅ Cargado")
                 st.dataframe(df_cap, use_container_width=True, height=150)
@@ -456,7 +325,7 @@ with tab1:
         if f2:
             try:
                 df_mat = pd.read_excel(f2)
-                guardar_archivo(f2, "maestro_materiales")
+                guardar_archivo(f2, "Maestro materiales")
                 st.session_state.df_mat = df_mat.copy()
                 st.success("✅ Cargado")
                 st.dataframe(df_mat, use_container_width=True, height=400)
@@ -476,7 +345,7 @@ with tab1:
         if f3:
             try:
                 df_cli = pd.read_excel(f3)
-                guardar_archivo(f3, "maestro_clientes")
+                guardar_archivo(f3, "Maestro clientes")
                 st.session_state.df_cli = df_cli.copy()
                 st.success("✅ Cargado")
                 st.dataframe(df_cli, use_container_width=True, height=400)
@@ -494,7 +363,7 @@ with tab1:
         if f4:
             try:
                 df_dem = pd.read_excel(f4)
-                guardar_archivo(f4, "demanda")
+                guardar_archivo(f4, "Demanda")
                 st.session_state.df_dem = df_dem.copy()
                 st.success("✅ Cargado")
                 st.dataframe(df_dem, use_container_width=True, height=400)
@@ -644,28 +513,25 @@ with tab2:
         st.success("✅ Cálculo inicial completado con éxito.")
 
     # -----------------------------
-    # Utilidad para mostrar y descargar sin columnas ocultas
+    # Utilidad: mostrar y descargar sin Semana/Lote_min/Lote_max
     # -----------------------------
     def mostrar_detalle_y_descargar(df, nombre_descarga):
-        # Columnas visibles (sin Semana, Lote_min, Lote_max)
         cols_visibles = [
             "Nº de propuesta","Material","Centro","Clase de orden",
             "Cantidad a fabricar","Unidad","Fecha"
         ]
         cols_presentes = [c for c in cols_visibles if c in df.columns]
 
-        # Tabla en pantalla
         st.dataframe(df[cols_presentes], use_container_width=True, height=420)
 
-        # Excel sin las columnas ocultas
-        output_path = os.path.join(UPLOAD_DIR, f"{nombre_descarga}_{datetime.now().strftime('%Y%m%d')}.xlsx")
+        output_path = os.path.join(UPLOAD_DIR, f"{nombre_descarga} {datetime.now().strftime('%Y%m%d')}.xlsx")
         try:
             df[cols_presentes].to_excel(output_path, index=False)
             with open(output_path, "rb") as f:
                 st.download_button(
                     f"📥 Descargar {nombre_descarga} (Excel)",
                     data=f,
-                    file_name=f"{nombre_descarga}_{datetime.now().strftime('%Y%m%d')}.xlsx"
+                    file_name=f"{nombre_descarga} {datetime.now().strftime('%Y%m%d')}.xlsx"
                 )
         except Exception as e:
             st.info(f"No se pudo generar el Excel: {e}")
@@ -678,20 +544,19 @@ with tab2:
         DG = st.session_state.DG
         MCH = st.session_state.MCH
 
-        # Métricas (opcionales y ligeras)
+        # Métricas
         total_props = len(df_base)
         horas_por_centro = df_base.groupby("Centro")["Horas"].sum().to_dict()
-
         m = st.columns(3)
         m[0].metric("Total Propuestas (inicial)", f"{total_props:,}".replace(",", "."))
         m[1].metric(f"Horas totales {DG}", f"{horas_por_centro.get(DG, 0):,.1f}h".replace(",", "."))
         m[2].metric(f"Horas totales {MCH}", f"{horas_por_centro.get(MCH, 0):,.1f}h".replace(",", "."))
 
-        # Distribución semanal de carga (inicial)
+        # Distribución semanal (inicial)
         st.subheader("📊 Distribución de Carga Horaria (semanal)")
         df_base_plot = df_base.copy()
         df_base_plot["Centro"] = df_base_plot["Centro"].astype(str)
-        df_base_plot["Semana"] = df_base_plot["Semana"].astype(str)   # <-- fuerza 'W' como texto
+        df_base_plot["Semana"] = df_base_plot["Semana"].astype(str)  # asegura la 'W' como texto
         carga_plot_ini = (
             df_base_plot.groupby(["Semana", "Centro"])["Horas"]
                         .sum()
@@ -707,16 +572,14 @@ with tab2:
 
         st.markdown("---")
         st.subheader("📋 Detalle de la Propuesta (inicial)")
-        mostrar_detalle_y_descargar(df_base, "Propuesta_Inicial")
+        mostrar_detalle_y_descargar(df_base, "Propuesta Inicial")
 
         st.markdown("---")
         st.subheader("🔁 ¿Quieres reajustar por semana y re‑planificar?")
 
-        # Botón que habilita los sliders por semana
         if st.button("Reajustar y volver a planificar por semana", use_container_width=True):
             st.session_state.mostrar_reajuste = True
 
-        # Sliders + Replanificación
         if st.session_state.get("mostrar_reajuste", False):
             lista_semanas = sorted(df_base["Semana"].dropna().astype(str).unique())
             st.markdown("**Configura los porcentajes por semana (0% = MCH · 100% = DG)**")
@@ -740,11 +603,10 @@ with tab2:
                 st.session_state.df_final_reajuste = df_final
                 st.success("✅ Re‑planificación completada.")
 
-        # Resultados finales tras reajuste
+        # Resultados finales
         if st.session_state.get("df_final_reajuste", None) is not None:
             df_final = st.session_state.df_final_reajuste
 
-            # Métricas finales
             st.markdown("---")
             st.subheader("📈 Resultados tras Re‑planificación")
             horas_por_centro_final = df_final.groupby("Centro")["Horas"].sum().to_dict()
@@ -753,11 +615,10 @@ with tab2:
             m2[1].metric(f"Horas totales {DG}", f"{horas_por_centro_final.get(DG, 0):,.1f}h".replace(",", "."))
             m2[2].metric(f"Horas totales {MCH}", f"{horas_por_centro_final.get(MCH, 0):,.1f}h".replace(",", "."))
 
-            # Distribución semanal de carga (re‑planificada)
             st.subheader("📊 Distribución de Carga Horaria (semanal) — Re‑planificación")
             df_final_plot = df_final.copy()
             df_final_plot["Centro"] = df_final_plot["Centro"].astype(str)
-            df_final_plot["Semana"] = df_final_plot["Semana"].astype(str)   # <-- fuerza 'W' como texto
+            df_final_plot["Semana"] = df_final_plot["Semana"].astype(str)
             carga_plot_fin = (
                 df_final_plot.groupby(["Semana", "Centro"])["Horas"]
                              .sum()
@@ -771,17 +632,13 @@ with tab2:
             st.caption("Resumen semanal de horas por centro (re‑planificado)")
             st.dataframe(carga_plot_fin.style.format("{:,.1f}"), use_container_width=True)
 
-            # Tabla y descarga final (sin Semana/Lote_min/Lote_max)
             st.subheader("📋 Detalle de la Propuesta (reajustada)")
-            mostrar_detalle_y_descargar(df_final, "Propuesta_Replan")
+            mostrar_detalle_y_descargar(df_final, "Propuesta Replan")
 
-# Footer — Texto centrado con mensaje solicitado
+# Footer — Versión 3
 st.markdown("---")
 st.markdown("""
 <div class="footer">
-    <p>
-        <strong>Carga los 4 archivos Excel necesarios</strong>, se ejecutará una primera planificación y, 
-        en caso de ser necesario, ajusta los porcentajes por semana y genera la planificación completa.
-    </p>
+    <p>✨ <strong>Sistema de Cálculo de Fabricación</strong> — Versión 3</p>
 </div>
 """, unsafe_allow_html=True)
