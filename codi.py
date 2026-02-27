@@ -1,6 +1,6 @@
 # ============================================================
-# SISTEMA DE CÁLCULO DE FABRICACIÓN — MODO C + AJUSTE + RE-MODO C
-# Interfaz intacta. Código corregido (gráficas, indentación, sin backticks).
+# SISTEMA DE CÁLCULO DE FABRICACIÓN — Planificación con ajuste semanal
+# Versión 3 (UI limpia, mismo estilo, sin textos "Modo C" / "Re‑Modo C")
 # ============================================================
 
 import streamlit as st
@@ -21,27 +21,27 @@ st.set_page_config(
 )
 
 # ------------------------------------------------------------
-# ESTILOS CSS (idéntico al tuyo; ojo: están escapados y no aplican estilos)
+# ESTILOS CSS (mismo estilo, ahora ACTIVADO)
 # ------------------------------------------------------------
 st.markdown("""
-    &lt;style&gt;
-    .main { padding-top: 2rem; }
-    h1 { color: #1f77b4; text-align: center; font-size: 2.5rem; margin-bottom: 1rem; }
-    h2 { color: #2c3e50; border-bottom: 3px solid #1f77b4; padding-bottom: 0.5rem; }
-    .section-container {
-        background-color: #f8f9fa;
-        padding: 1.5rem;
-        border-radius: 10px;
-        border-left: 5px solid #1f77b4;
-        margin-bottom: 1.5rem;
-    }
-    .footer {
-        text-align: center; color: #7f8c8d; font-size: 0.9rem; margin-top: 2rem;
-        padding-top: 1rem; border-top: 1px solid #ecf0f1;
-    }
-    .stButton &gt; button { width: 100%; font-weight: bold; border-radius: 8px; }
-    .small-note { color:#7f8c8d; font-size:0.85rem; }
-    &lt;/style&gt;
+<style>
+.main { padding-top: 2rem; }
+h1 { color: #1f77b4; text-align: left; font-size: 2.5rem; margin-bottom: 1rem; display:flex; align-items:center; gap:.6rem;}
+h2 { color: #2c3e50; border-bottom: 3px solid #1f77b4; padding-bottom: 0.5rem; }
+.section-container {
+    background-color: #f8f9fa;
+    padding: 1.5rem;
+    border-radius: 10px;
+    border-left: 5px solid #1f77b4;
+    margin-bottom: 1.5rem;
+}
+.footer {
+    text-align: left; color: #7f8c8d; font-size: 0.95rem; margin-top: 2rem;
+    padding-top: 1rem; border-top: 1px solid #ecf0f1;
+}
+.stButton > button { width: 100%; font-weight: bold; border-radius: 8px; }
+.small-note { color:#7f8c8d; font-size:0.85rem; }
+</style>
 """, unsafe_allow_html=True)
 
 # ------------------------------------------------------------
@@ -81,7 +81,7 @@ def norm_code(code):
     return digits
 
 # ------------------------------------------------------------
-# DETECTAR COLUMNA CLIENTE (CORREGIDO)
+# DETECTAR COLUMNA CLIENTE
 # ------------------------------------------------------------
 def detectar_columna_cliente(df):
     posibles = [
@@ -157,10 +157,9 @@ def repartir_porcentaje(df_semana, pct_dg, dg, mch):
     return df_semana
 
 # ------------------------------------------------------------
-# 🔧 MODO C (CORREGIDO — ACCESO SEGURO A LOTES)
+# Planificador por lotes con capacidad diaria
 # ------------------------------------------------------------
 def modo_C(df_agr, df_mat, capacidades, DG_code, MCH_code):
-
     tiempos = df_mat[[
         "Material","Unidad",
         "Tiempo fabricación unidad DG",
@@ -179,7 +178,10 @@ def modo_C(df_agr, df_mat, capacidades, DG_code, MCH_code):
         return capacidad_restante[key]
 
     def consume(centro, fecha, h):
-        capacidad_restante[(centro, fecha)] = get_cap(centro, fecha) - h
+        nuevo = get_cap(centro, fecha) - h
+        if nuevo < 0 and abs(nuevo) < 1e-9:
+            nuevo = 0.0
+        capacidad_restante[(centro, fecha)] = nuevo
 
     def horas_nec(centro, qty, r):
         tu = r["Tiempo fabricación unidad DG"] if centro == DG_code else r["Tiempo fabricación unidad MCH"]
@@ -264,10 +266,9 @@ def modo_C(df_agr, df_mat, capacidades, DG_code, MCH_code):
     return pd.DataFrame(out)
 
 # ------------------------------------------------------------
-# 🔧 EJECUCIÓN COMPLETA (CORREGIDO)
+# EJECUCIÓN COMPLETA
 # ------------------------------------------------------------
 def ejecutar_calculo(df_cap, df_mat, df_cli, df_dem, ajustes):
-
     capacidades = leer_capacidades(df_cap)
     DG, MCH, _ = detectar_centros_desde_capacidades(capacidades)
 
@@ -284,7 +285,7 @@ def ejecutar_calculo(df_cap, df_mat, df_cli, df_dem, ajustes):
     df = df_dem.merge(df_mat, on=["Material","Unidad"], how="left")
     df = df.merge(df_cli, left_on=col_cli_dem, right_on=col_cli_cli, how="left")
 
-    # DECISIÓN COSTES (igual que el tuyo)
+    # Decisión por coste
     COL_COST_DG = next((c for c in df.columns if "dg" in c.lower() and "cost" in c.lower()), None)
     COL_COST_MCH = next((c for c in df.columns if "mch" in c.lower() and "cost" in c.lower()), None)
 
@@ -334,7 +335,7 @@ def ejecutar_calculo(df_cap, df_mat, df_cli, df_dem, ajustes):
         df_c["Cantidad a fabricar"] * df_c["Tiempo fabricación unidad MCH"]
     )
 
-    # ---- REPARTO POR SEMANA ----
+    # ---- Ajuste por semana ----
     df_rep = []
     for sem in sorted(df_c["Semana"].dropna().unique()):
         df_sem = df_c[df_c["Semana"] == sem].copy()
@@ -361,19 +362,19 @@ def ejecutar_calculo(df_cap, df_mat, df_cli, df_dem, ajustes):
     return df_final, capacidades, DG, MCH
 
 # ============================================================
-# INTERFAZ — Encabezado + Tabs (igual que tu original)
+# INTERFAZ — Encabezado + Tabs
 # ============================================================
-st.markdown("&lt;h1&gt;📊 Sistema de Cálculo de Fabricación&lt;/h1&gt;", unsafe_allow_html=True)
-st.markdown("Carga los 4 archivos Excel necesarios, ajusta los porcentajes por semana y ejecuta Modo C → Reparto → Re‑Modo C.")
+st.markdown('<h1>📊 Sistema de Cálculo de Fabricación</h1>', unsafe_allow_html=True)
+st.markdown("Carga los 4 archivos Excel necesarios, ajusta los porcentajes por semana y **genera la planificación completa**.")
 st.markdown("---")
 
 tab1, tab2 = st.tabs(["📥 Carga de Archivos", "⚙️ Ajuste y Ejecución"])
 
-# Variables de estado (como en tu código original)
+# Variables de estado
 df_cap = df_mat = df_cli = df_dem = None
 
 # =========================
-# TAB 1 — CARGA (idéntico a tu interfaz)
+# TAB 1 — CARGA
 # =========================
 with tab1:
     st.subheader("📁 Carga tus archivos Excel")
@@ -389,7 +390,6 @@ with tab1:
             try:
                 df_cap = pd.read_excel(f1)
                 guardar_archivo(f1, "capacidad_planta")
-                # Guardar también en sesión (no cambia la UI; ayuda al Tab 2)
                 st.session_state.df_cap = df_cap.copy()
                 st.success("✅ Cargado")
                 st.dataframe(df_cap, use_container_width=True, height=150)
@@ -457,10 +457,10 @@ with tab1:
         st.markdown('</div>', unsafe_allow_html=True)
 
 # =========================
-# TAB 2 — EJECUCIÓN (cálculo inicial) + REAJUSTE (por porcentajes)
+# TAB 2 — EJECUCIÓN + REAJUSTE
 # =========================
 with tab2:
-    # Recuperamos DataFrames (cargados en Tab 1) desde session_state si existen
+    # Recuperamos DataFrames (cargados en Tab 1)
     df_cap = st.session_state.get("df_cap", None)
     df_mat = st.session_state.get("df_mat", None)
     df_cli = st.session_state.get("df_cli", None)
@@ -470,12 +470,12 @@ with tab2:
         st.warning("⚠️ Por favor, carga los 4 archivos en la pestaña anterior para habilitar los ajustes.")
         st.stop()
 
-    # Limpieza de columnas (igual que hacías)
+    # Limpieza de columnas
     for d in [df_cap, df_mat, df_cli, df_dem]:
         d.columns = d.columns.str.strip()
 
     # -----------------------------
-    # Función local: Cálculo inicial SOLO Modo C (sin reparto)
+    # Función local: Generación inicial (usa el planificador por lotes)
     # -----------------------------
     def ejecutar_modoC_base(df_cap, df_mat, df_cli, df_dem):
         capacidades = leer_capacidades(df_cap)
@@ -496,7 +496,7 @@ with tab2:
         df = df_dem.merge(df_mat, on=["Material", "Unidad"], how="left")
         df = df.merge(df_cli, left_on=col_cli_dem, right_on=col_cli_cli, how="left")
 
-        # Decisión por coste (respetando las columnas existentes)
+        # Decisión por coste
         COL_COST_DG = next((c for c in df.columns if "dg" in c.lower() and "cost" in c.lower()), None)
         COL_COST_MCH = next((c for c in df.columns if "mch" in c.lower() and "cost" in c.lower()), None)
 
@@ -525,7 +525,7 @@ with tab2:
         g["Lote_min"] = g["Tamaño lote mínimo"]
         g["Lote_max"] = g["Tamaño lote máximo"]
 
-        # Modo C inicial
+        # Generación inicial de propuestas (planificador por lotes con capacidad)
         df_c = modo_C(
             df_agr=g[["Material","Unidad","Centro","Cantidad","Fecha","Semana","Lote_min","Lote_max"]],
             df_mat=df_mat,
@@ -545,7 +545,7 @@ with tab2:
         return df_c, capacidades, DG_code, MCH_code
 
     # -----------------------------
-    # Función local: Reajuste (reparto por semana) + Re‑Modo C
+    # Función local: Reajuste semanal + Replanificación
     # -----------------------------
     def replanificar_con_porcentajes(df_base, df_mat, capacidades, DG_code, MCH_code, ajustes):
         # 1) Reparto por semana (en HORAS)
@@ -560,7 +560,7 @@ with tab2:
 
         df_adj = pd.concat(df_repartido, ignore_index=True) if df_repartido else df_base.copy()
 
-        # 2) Re‑Modo C
+        # 2) Replanificación
         df_adj_pre = df_adj.rename(columns={"Cantidad a fabricar":"Cantidad"})[
             ["Material","Unidad","Centro","Cantidad","Fecha","Semana","Lote_min","Lote_max"]
         ]
@@ -578,12 +578,12 @@ with tab2:
         return df_final
 
     # -----------------------------
-    # UI — Primer paso: Cálculo inicial
+    # UI — Paso 1: Generación inicial
     # -----------------------------
-    st.subheader("🚀 Cálculo inicial (Modo C)")
+    st.subheader("🚀 Generación inicial de la planificación")
 
     if st.button("🚀 EJECUTAR CÁLCULO DE PROPUESTA", use_container_width=True):
-        with st.spinner("Calculando Modo C (inicial)…"):
+        with st.spinner("Generando planificación inicial…"):
             df_base, capacidades, DG, MCH = ejecutar_modoC_base(df_cap, df_mat, df_cli, df_dem)
 
         st.session_state.calculo_realizado = True
@@ -599,13 +599,8 @@ with tab2:
     # -----------------------------
     if st.session_state.get("calculo_realizado", False):
         df_base = st.session_state.df_base
-        capacidades = st.session_state.capacidades
         DG = st.session_state.DG
         MCH = st.session_state.MCH
-
-        # Capacidades leídas
-        st.markdown("**Capacidades leídas del Excel (h/día):**")
-        st.write({k: f"{v:.1f}" for k, v in capacidades.items()})
 
         # Métricas (opcionales y ligeras)
         total_props = len(df_base)
@@ -616,12 +611,10 @@ with tab2:
         m[1].metric(f"Horas totales {DG}", f"{horas_por_centro.get(DG, 0):,.1f}h".replace(",", "."))
         m[2].metric(f"Horas totales {MCH}", f"{horas_por_centro.get(MCH, 0):,.1f}h".replace(",", "."))
 
-        # === NUEVA GRÁFICA: Distribución de Carga Horaria por Semana y Centro ===
+        # Distribución semanal de carga (inicial)
         st.subheader("📊 Distribución de Carga Horaria (semanal)")
-
         df_base_plot = df_base.copy()
         df_base_plot["Centro"] = df_base_plot["Centro"].astype(str)
-
         carga_plot_ini = (
             df_base_plot.groupby(["Semana", "Centro"])["Horas"]
                         .sum()
@@ -629,10 +622,8 @@ with tab2:
                         .fillna(0)
                         .sort_index()
         )
-
         col_order = [str(DG), str(MCH)]
         carga_plot_ini = carga_plot_ini.reindex(columns=[c for c in col_order if c in carga_plot_ini.columns])
-
         st.bar_chart(carga_plot_ini, use_container_width=True)
         st.caption("Resumen semanal de horas por centro (inicial)")
         st.dataframe(carga_plot_ini.style.format("{:,.1f}"), use_container_width=True)
@@ -666,11 +657,8 @@ with tab2:
         if st.button("Reajustar y volver a planificar por semana", use_container_width=True):
             st.session_state.mostrar_reajuste = True
 
-        # -----------------------------
-        # UI — Sliders de reajuste + Re‑Modo C
-        # -----------------------------
+        # Sliders + Replanificación
         if st.session_state.get("mostrar_reajuste", False):
-            # Sliders por semana tomando del resultado base
             lista_semanas = sorted(df_base["Semana"].dropna().unique())
             st.markdown("**Configura los porcentajes por semana (0% = MCH · 100% = DG)**")
             ajustes = {}
@@ -679,7 +667,7 @@ with tab2:
                 with cols_sliders[i % 4]:
                     ajustes[sem] = st.slider(f"Sem {sem}", 0, 100, 50, key=f"slider_{sem}")
 
-            st.info("Pulsa **Aplicar porcentajes** para re‑planificar (Re‑Modo C).")
+            st.info("Pulsa **Aplicar porcentajes** para re‑planificar.")
             if st.button("Aplicar porcentajes y re‑planificar", use_container_width=True):
                 with st.spinner("Aplicando reparto y re‑planificando…"):
                     df_final = replanificar_con_porcentajes(
@@ -690,13 +678,10 @@ with tab2:
                         MCH_code=st.session_state.MCH,
                         ajustes=ajustes
                     )
-
                 st.session_state.df_final_reajuste = df_final
                 st.success("✅ Re‑planificación completada.")
 
-        # -----------------------------
-        # Resultados finales tras reajuste (si existen)
-        # -----------------------------
+        # Resultados finales tras reajuste
         if st.session_state.get("df_final_reajuste", None) is not None:
             df_final = st.session_state.df_final_reajuste
 
@@ -709,12 +694,10 @@ with tab2:
             m2[1].metric(f"Horas totales {DG}", f"{horas_por_centro_final.get(DG, 0):,.1f}h".replace(",", "."))
             m2[2].metric(f"Horas totales {MCH}", f"{horas_por_centro_final.get(MCH, 0):,.1f}h".replace(",", "."))
 
-            # === NUEVA GRÁFICA (reajustada): Distribución de Carga Horaria por Semana y Centro ===
+            # Distribución semanal de carga (re‑planificada)
             st.subheader("📊 Distribución de Carga Horaria (semanal) — Re‑planificación")
-
             df_final_plot = df_final.copy()
             df_final_plot["Centro"] = df_final_plot["Centro"].astype(str)
-
             carga_plot_fin = (
                 df_final_plot.groupby(["Semana", "Centro"])["Horas"]
                              .sum()
@@ -722,10 +705,8 @@ with tab2:
                              .fillna(0)
                              .sort_index()
             )
-
             col_order = [str(DG), str(MCH)]
             carga_plot_fin = carga_plot_fin.reindex(columns=[c for c in col_order if c in carga_plot_fin.columns])
-
             st.bar_chart(carga_plot_fin, use_container_width=True)
             st.caption("Resumen semanal de horas por centro (re‑planificado)")
             st.dataframe(carga_plot_fin.style.format("{:,.1f}"), use_container_width=True)
@@ -751,11 +732,10 @@ with tab2:
             except Exception as e:
                 st.info(f"No se pudo generar el Excel final: {e}")
 
-# Footer (idéntico)
+# Footer — Versión 3
 st.markdown("---")
 st.markdown("""
-&lt;div class="footer"&gt;
-    &lt;p&gt;✨ &lt;strong&gt;Sistema de Cálculo de Fabricación&lt;/strong&gt; — Interfaz Unificada&lt;/p&gt;
-    &lt;p&gt;Modo C + Reparto Proporcional + Re‑Modo C | Fechas dd.MM.yyyy | Capacidades desde “Capacidad horas”&lt;/p&gt;
-&lt;/div&gt;
+<div class="footer">
+    <p>✨ <strong>Sistema de Cálculo de Fabricación</strong> — Versión 3</p>
+</div>
 """, unsafe_allow_html=True)
