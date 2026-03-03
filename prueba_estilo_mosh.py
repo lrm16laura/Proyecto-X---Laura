@@ -197,7 +197,6 @@ def guardar_archivo_subido(archivo, nombre_legible):
     with open(ruta, "wb") as f:
         f.write(archivo.getbuffer())
     return ruta
-``
 # ================================
 # PROYECTO‑X — BLOQUE 2/4
 # Página "Tablas maestras"
@@ -785,4 +784,3 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
-``
