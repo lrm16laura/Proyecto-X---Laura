@@ -76,38 +76,30 @@ div.stButton > button {
 # ---------- ESTADO DE SESIÓN ----------
 if "autenticado" not in st.session_state:
     st.session_state.autenticado = False
-
 if "usuario" not in st.session_state:
     st.session_state.usuario = ""
-
 if "current_page" not in st.session_state:
-    st.session_state.current_page = "Tablas maestras"
+    st.session_state.current_page = "Tablas maestras"   # flujo deseado
 
-if "df_cap" not in st.session_state:
-    st.session_state.df_cap = None
-if "df_mat" not in st.session_state:
-    st.session_state.df_mat = None
-if "df_cli" not in st.session_state:
-    st.session_state.df_cli = None
-if "df_dem" not in st.session_state:
-    st.session_state.df_dem = None
+# DataFrames de trabajo
+for key in ("df_cap", "df_mat", "df_cli", "df_dem"):
+    if key not in st.session_state:
+        st.session_state[key] = None
 
+# Rutas
 UPLOAD_DIR = "archivos_cargados"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
-
 HIST_PATH = os.path.join(UPLOAD_DIR, "historial_ejecuciones.xlsx")
 
 # ---------- LOGIN ----------
 if not st.session_state.autenticado:
-    col1, col2, col3 = st.columns([1,1,1])
-    with col2:
+    c1, c2, c3 = st.columns([1,1,1])
+    with c2:
         st.markdown("<br><br>", unsafe_allow_html=True)
         st.markdown("<h1 style='text-align:center;color:#004d85;'>💧 Proyecto‑X</h1>", unsafe_allow_html=True)
         st.subheader("Inicio de sesión")
-
         usuario_input = st.text_input("Usuario:")
-        password_input = st.text_input("Contraseña:", type="password")
-
+        password_input = st.text_input("Contraseña:", type="password")  # simulado
         if st.button("Entrar"):
             if usuario_input.strip():
                 st.session_state.autenticado = True
@@ -121,7 +113,7 @@ if not st.session_state.autenticado:
 with st.sidebar:
     st.markdown('<div class="mosh-logo">💧 Proyecto‑X</div>', unsafe_allow_html=True)
 
-    def set_page(name):
+    def set_page(name: str):
         st.session_state.current_page = name
 
     st.button("🗺️ Tablas maestras 〉", on_click=set_page, args=("Tablas maestras",))
@@ -140,16 +132,17 @@ with st.sidebar:
         st.rerun()
 
 # ---------- CABECERA ----------
-c1, c2 = st.columns([10,2])
-with c1:
+h1, h2 = st.columns([10,2])
+with h1:
     st.write("≡")
-with c2:
+with h2:
     st.markdown("<div style='font-size:24px;font-weight:bold;color:#003366;text-align:right;'>GRIFOLS</div>", unsafe_allow_html=True)
 
 st.write("---")
 st.write(f"## {st.session_state.current_page}")
 st.write(f"Bienvenido, **{st.session_state.usuario}**.")
 
+# Página actual
 page = st.session_state.current_page
 
 # ---------- UTILIDADES GENERALES ----------
@@ -176,18 +169,28 @@ def norm_code(code):
 
 def semana_iso_str_from_ts(ts: pd.Timestamp) -> str:
     iso = ts.isocalendar()
-    return f"{iso.year}-W{iso.week:02d}"
+    # En pandas recientes iso es un objeto con .year/.week o un df con ["year"]["week"]
+    year = getattr(iso, "year", getattr(iso, 0))
+    week = getattr(iso, "week", getattr(iso, 0))
+    # Si viniese como DataFrame-like, resolvemos por índice
+    try:
+        if hasattr(iso, "__getitem__"):
+            year = iso["year"]
+            week = iso["week"]
+    except Exception:
+        pass
+    return f"{int(year)}-W{int(week):02d}"
 
 def detectar_columna_cliente(df):
     posibles = [
-        "cliente", "client", "customer",
-        "id cliente", "codigo cliente", "cod cliente",
-        "cliente id", "sap cliente"
+        "cliente","client","customer",
+        "id cliente","codigo cliente","cod cliente",
+        "cliente id","sap cliente"
     ]
-    lc = {c: c.lower().strip() for c in df.columns}
-    for orig, low in lc.items():
+    low = {c: c.lower().strip() for c in df.columns}
+    for orig, l in low.items():
         for p in posibles:
-            if p == low or p in low:
+            if p == l or p in l:
                 return orig
     return None
 
@@ -197,29 +200,25 @@ def guardar_archivo_subido(archivo, nombre_legible):
     with open(ruta, "wb") as f:
         f.write(archivo.getbuffer())
     return ruta
-# ================================
+    # ================================
 # PROYECTO‑X — BLOQUE 2/4
 # Página "Tablas maestras"
 # ================================
 
 def limpiar_estado_planificacion():
     """Evita que se mezclen cálculos antiguos con datos nuevos."""
-    for key in ["df_base", "df_replan", "capacidades_calc", "DG_calc", "MCH_calc"]:
-        if key in st.session_state:
-            del st.session_state[key]
-
+    for k in ("df_base", "df_replan", "capacidades_calc", "DG_calc", "MCH_calc"):
+        if k in st.session_state:
+            del st.session_state[k]
 
 def pagina_tablas_maestras():
     st.markdown("### 📥 Carga de archivos maestros")
 
-    # ============================================================
     # 1) CAPACIDAD
-    # ============================================================
     st.markdown('<div class="section-container">', unsafe_allow_html=True)
-    st.markdown("#### 🏭 Capacidad de planta (Capacidad horas por Centro)")
+    st.markdown("#### 🏭 Capacidad de planta (horas por Centro)")
 
     f1 = st.file_uploader("Subir archivo de Capacidad (.xlsx)", type=["xlsx"], key="cap")
-
     if f1:
         try:
             df_cap = pd.read_excel(f1)
@@ -234,14 +233,11 @@ def pagina_tablas_maestras():
         st.info("Sube el archivo de capacidad para continuar.")
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # ============================================================
     # 2) MATERIALES
-    # ============================================================
     st.markdown('<div class="section-container">', unsafe_allow_html=True)
     st.markdown("#### 📦 Maestro de materiales")
 
     f2 = st.file_uploader("Subir archivo de Materiales (.xlsx)", type=["xlsx"], key="mat")
-
     if f2:
         try:
             df_mat = pd.read_excel(f2)
@@ -256,14 +252,11 @@ def pagina_tablas_maestras():
         st.info("Sube el archivo de materiales para continuar.")
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # ============================================================
     # 3) CLIENTES
-    # ============================================================
     st.markdown('<div class="section-container">', unsafe_allow_html=True)
     st.markdown("#### 👥 Maestro de clientes")
 
     f3 = st.file_uploader("Subir archivo de Clientes (.xlsx)", type=["xlsx"], key="cli")
-
     if f3:
         try:
             df_cli = pd.read_excel(f3)
@@ -278,14 +271,11 @@ def pagina_tablas_maestras():
         st.info("Sube el archivo de clientes para continuar.")
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # ============================================================
     # 4) DEMANDA
-    # ============================================================
     st.markdown('<div class="section-container">', unsafe_allow_html=True)
-    st.markdown("#### 📈 Demanda (Fecha + Cantidad por Material)")
+    st.markdown("#### 📈 Demanda (Fecha de necesidad + Cantidad por Material)")
 
     f4 = st.file_uploader("Subir archivo de Demanda (.xlsx)", type=["xlsx"], key="dem")
-
     if f4:
         try:
             df_dem = pd.read_excel(f4)
@@ -300,9 +290,7 @@ def pagina_tablas_maestras():
         st.info("Sube el archivo de demanda para continuar.")
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # ============================================================
-    # VALIDACIÓN GLOBAL
-    # ============================================================
+    # Validación global
     if all([
         st.session_state.df_cap is not None,
         st.session_state.df_mat is not None,
@@ -313,21 +301,58 @@ def pagina_tablas_maestras():
         st.info("Ahora puedes ir a 👉 **🏭 Órdenes de fabricación** para ejecutar la planificación.")
     else:
         st.warning("⚠️ Aún faltan archivos por cargar.")
-
-
-# ---------- INTEGRACIÓN EN EL ROUTER ----------
-if page == "Tablas maestras":
-    pagina_tablas_maestras()
-# ================================
+        # ================================
 # PROYECTO‑X — BLOQUE 3/4
-# PLANIFICADOR COMPLETO + REPLANIFICACIÓN + HISTORIAL
+# PLANIFICADOR + REPLANIFICACIÓN + HISTORIAL + PÁGINAS
 # ================================
 
-# ----------------------------------------------------
-# A) CAPACIDADES
-# ----------------------------------------------------
+# -------- HISTORIAL --------
+def guardar_historial(tipo, usuario, df_resultado, dg, mch):
+    """Guarda un registro (Inicial/Reajustado) en 'historial_ejecuciones.xlsx'."""
+    if df_resultado is None or len(df_resultado) == 0:
+        return None
+
+    registro = pd.DataFrame([{
+        "Fecha ejecución": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "Usuario": usuario,
+        "Tipo de ejecución": tipo,
+        "Total propuestas": len(df_resultado),
+        "Horas DG": df_resultado[df_resultado["Centro"] == dg]["Horas"].sum(),
+        "Horas MCH": df_resultado[df_resultado["Centro"] == mch]["Horas"].sum()
+    }])
+
+    if os.path.exists(HIST_PATH):
+        hist = pd.read_excel(HIST_PATH)
+        hist = pd.concat([hist, registro], ignore_index=True)
+    else:
+        hist = registro
+
+    hist.to_excel(HIST_PATH, index=False)
+    return HIST_PATH
+
+def mostrar_historial():
+    st.markdown("### 📜 Historial de ejecuciones")
+    if not os.path.exists(HIST_PATH):
+        st.info("Todavía no existe ningún historial.")
+        return
+    df_hist = pd.read_excel(HIST_PATH)
+    if df_hist.empty:
+        st.info("No hay ejecuciones registradas aún.")
+        return
+    st.dataframe(df_hist, use_container_width=True, height=360)
+    st.markdown('<div class="btn-azul">', unsafe_allow_html=True)
+    with open(HIST_PATH, "rb") as f:
+        st.download_button(
+            "📥 Descargar historial",
+            data=f,
+            file_name="historial_ejecuciones.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+    st.markdown('</div>', unsafe_allow_html=True)
+
+# -------- PLANIFICADOR: CAPACIDADES --------
 def leer_capacidades(df_cap):
-    """Devuelve un diccionario {centro: capacidad_horas}."""
+    """Devuelve {centro_normalizado: capacidad_horas}."""
     if df_cap is None:
         st.error("No se cargó el archivo de capacidad.")
         return {}
@@ -336,29 +361,24 @@ def leer_capacidades(df_cap):
         st.error("❌ Falta la columna 'Centro' en Capacidad.")
         return {}
 
-    # Buscar columna de capacidad
+    # localizar columna de capacidad (flexible)
     col_lower = {c: c.lower().strip() for c in df_cap.columns}
     cap_col = None
-    for c, lower in col_lower.items():
-        if "capacidad" in lower and "hora" in lower:
+    for c, low in col_lower.items():
+        if "capacidad" in low and "hora" in low:
             cap_col = c
             break
-
-    if not cap_col:
-        st.error("❌ No se encuentra una columna de capacidad en horas.")
+    if cap_col is None:
+        st.error("❌ No se encontró la columna de 'Capacidad horas'.")
         return {}
 
     capacidades = {}
-    for _, r in df_cap.iterrows():
-        centro = norm_code(r["Centro"])
-        horas = to_float_safe(r[cap_col], 0)
-        capacidades[centro] = horas
-
+    for _, row in df_cap.iterrows():
+        capacidades[norm_code(row["Centro"])] = to_float_safe(row[cap_col], 0)
     return capacidades
 
-
-def detectar_centros(capacidades):
-    """Detecta DG y MCH por sufijos conocidos."""
+def detectar_centros(capacidades: dict):
+    """Heurística para detectar DG y MCH por sufijos típicos."""
     if not capacidades:
         return None, None
     keys = list(capacidades.keys())
@@ -366,16 +386,12 @@ def detectar_centros(capacidades):
     MCH = next((k for k in keys if k.endswith("184")), keys[-1])
     return DG, MCH
 
-
-# ----------------------------------------------------
-# B) REPARTO PORCENTUAL
-# ----------------------------------------------------
+# -------- PLANIFICADOR: REPARTO PORCENTAJE --------
 def repartir_porcentaje(df_semana, pct_dg, dg, mch):
-    """Reparte la carga semanal según % DG vs MCH."""
+    """Reparte líneas de una semana entre DG/MCH según % objetivo."""
     if pct_dg <= 0:
         df_semana["Centro"] = mch
         return df_semana
-
     if pct_dg >= 100:
         df_semana["Centro"] = dg
         return df_semana
@@ -396,23 +412,24 @@ def repartir_porcentaje(df_semana, pct_dg, dg, mch):
     df_semana["Centro"] = destinos
     return df_semana
 
-
-# ----------------------------------------------------
-# C) MODO C – Planificador completo
-# ----------------------------------------------------
+# -------- PLANIFICADOR: MODO C --------
 def modo_C(df_agr, df_mat, capacidades, DG_code, MCH_code):
-    """Planificador con lotes + capacidad diaria."""
+    """
+    Planificador con:
+    - capacidad diaria
+    - lotes mínimos/máximos
+    - empuje al día siguiente si no cabe
+    """
     tiempos = df_mat[[
-        "Material", "Unidad",
+        "Material","Unidad",
         "Tiempo fabricación unidad DG",
         "Tiempo fabricación unidad MCH",
-        "Tamaño lote mínimo",
-        "Tamaño lote máximo"
+        "Tamaño lote mínimo","Tamaño lote máximo"
     ]].drop_duplicates()
 
-    df = df_agr.merge(tiempos, on=["Material", "Unidad"], how="left")
+    df = df_agr.merge(tiempos, on=["Material","Unidad"], how="left")
 
-    capacidad_restante = {}  # (centro, fecha) → horas disponibles
+    capacidad_restante = {}  # (centro, fecha) -> horas disponibles
 
     def cap_rest(centro, fecha):
         key = (centro, fecha)
@@ -421,131 +438,118 @@ def modo_C(df_agr, df_mat, capacidades, DG_code, MCH_code):
         return capacidad_restante[key]
 
     def consumir(centro, fecha, horas):
-        capacidad_restante[(centro, fecha)] = max(0, cap_rest(centro, fecha) - horas)
+        capacidad_restante[(centro, fecha)] = max(0.0, cap_rest(centro, fecha) - horas)
 
-    def horas_necesarias(centro, cantidad, fila):
-        if centro == DG_code:
-            tu = to_float_safe(fila["Tiempo fabricación unidad DG"])
-        else:
-            tu = to_float_safe(fila["Tiempo fabricación unidad MCH"])
-        return cantidad * tu
+    def horas_necesarias(centro, qty, fila):
+        tu = to_float_safe(fila["Tiempo fabricación unidad DG"]) if centro == DG_code \
+             else to_float_safe(fila["Tiempo fabricación unidad MCH"])
+        return qty * tu
 
     out = []
-    proposal_id = 1
+    pid = 1
 
-    for _, fila in df.iterrows():
-
-        centro = norm_code(fila["Centro"])
-        fecha = pd.to_datetime(fila["Fecha"]).normalize()
+    for _, r in df.iterrows():
+        centro = norm_code(r["Centro"])
+        fecha = pd.to_datetime(r["Fecha"]).normalize()
         semana = semana_iso_str_from_ts(fecha)
 
-        cantidad = to_float_safe(fila["Cantidad"])
-        lote_min = to_float_safe(fila["Tamaño lote mínimo"])
-        lote_max = to_float_safe(fila["Tamaño lote máximo"], 1)
-        cantidad = max(cantidad, lote_min)
+        cantidad = to_float_safe(r.get("Cantidad", 0), 0)
+        lote_min = to_float_safe(r.get("Tamaño lote mínimo", 0), 0)
+        lote_max = to_float_safe(r.get("Tamaño lote máximo", 1), 1)
 
-        # Dividir en lotes
-        partes = []
-        pendiente = cantidad
+        total = max(cantidad, lote_min)
+        lote_max = max(1.0, lote_max)
+
+        # dividir en partes por lote_max
+        partes, pendiente = [], total
         while pendiente > 0:
             q = min(pendiente, lote_max)
             partes.append(round(q, 2))
             pendiente -= q
 
-        for qty in partes:
-            restante = qty
-            while restante > 0:
+        for ql in partes:
+            p = ql
+            while p > 0:
                 cap = cap_rest(centro, fecha)
-                hnec = horas_necesarias(centro, restante, fila)
+                hnec = horas_necesarias(centro, p, r)
 
                 if cap >= hnec:
-                    # Cabe entero
                     consumir(centro, fecha, hnec)
                     out.append({
-                        "Nº de propuesta": proposal_id,
-                        "Material": fila["Material"],
+                        "Nº de propuesta": pid,
+                        "Material": r["Material"],
                         "Centro": centro,
                         "Clase de orden": "NORM",
-                        "Cantidad a fabricar": round(restante, 2),
-                        "Unidad": fila["Unidad"],
+                        "Cantidad a fabricar": round(p, 2),
+                        "Unidad": r["Unidad"],
                         "Fecha": fecha.strftime("%d.%m.%Y"),
                         "Semana": semana
                     })
-                    proposal_id += 1
-                    restante = 0
-
+                    pid += 1
+                    p = 0
                 else:
-                    # Solo cabe una parte
                     if cap > 0:
-                        tu = (to_float_safe(fila["Tiempo fabricación unidad DG"])
+                        tu = (to_float_safe(r["Tiempo fabricación unidad DG"])
                               if centro == DG_code
-                              else to_float_safe(fila["Tiempo fabricación unidad MCH"]))
+                              else to_float_safe(r["Tiempo fabricación unidad MCH"]))
                         posible = cap / tu
                         posible = max(posible, 0)
 
                         consumir(centro, fecha, cap)
                         out.append({
-                            "Nº de propuesta": proposal_id,
-                            "Material": fila["Material"],
+                            "Nº de propuesta": pid,
+                            "Material": r["Material"],
                             "Centro": centro,
                             "Clase de orden": "NORM",
                             "Cantidad a fabricar": round(posible, 2),
-                            "Unidad": fila["Unidad"],
+                            "Unidad": r["Unidad"],
                             "Fecha": fecha.strftime("%d.%m.%Y"),
                             "Semana": semana
                         })
-                        proposal_id += 1
-                        restante -= posible
+                        pid += 1
+                        p -= posible
 
+                    # siguiente día
                     fecha += timedelta(days=1)
                     semana = semana_iso_str_from_ts(fecha)
 
     df_out = pd.DataFrame(out)
 
     # Recalcular horas
-    tiempos2 = df_mat[[
-        "Material", "Unidad",
-        "Tiempo fabricación unidad DG",
-        "Tiempo fabricación unidad MCH"
-    ]].drop_duplicates()
+    tiempos2 = df_mat[["Material","Unidad",
+                       "Tiempo fabricación unidad DG",
+                       "Tiempo fabricación unidad MCH"]].drop_duplicates()
 
-    df_out = df_out.merge(tiempos2, on=["Material", "Unidad"], how="left")
-
+    df_out = df_out.merge(tiempos2, on=["Material","Unidad"], how="left")
     df_out["Horas"] = np.where(
         df_out["Centro"] == DG_code,
         df_out["Cantidad a fabricar"] * df_out["Tiempo fabricación unidad DG"],
         df_out["Cantidad a fabricar"] * df_out["Tiempo fabricación unidad MCH"]
     )
-
     return df_out
 
-
-# ----------------------------------------------------
-# D) REPLANIFICACIÓN COMPLETA
-# ----------------------------------------------------
+# -------- PLANIFICADOR: REPLANIFICACIÓN --------
 def replanificar(df_base, df_mat, capacidades, DG_code, MCH_code, ajustes):
-    df_sem_list = []
+    df_reps = []
+    for sem in sorted(df_base["Semana"].astype(str).unique()):
+        df_sem = df_base[df_base["Semana"].astype(str) == sem].copy()
+        if df_sem.empty:
+            continue
+        pct = ajustes.get(sem, 50)
+        df_sem = repartir_porcentaje(df_sem, pct, DG_code, MCH_code)
+        df_reps.append(df_sem)
 
-    for semana in sorted(df_base["Semana"].astype(str).unique()):
-        df_s = df_base[df_base["Semana"].astype(str) == semana].copy()
-        pct = ajustes.get(semana, 50)
-        df_s = repartir_porcentaje(df_s, pct, DG_code, MCH_code)
-        df_sem_list.append(df_s)
+    if not df_reps:
+        return df_base.copy()
 
-    df_adj = pd.concat(df_sem_list, ignore_index=True)
-
+    df_adj = pd.concat(df_reps, ignore_index=True)
     df_adj_pre = df_adj.rename(columns={"Cantidad a fabricar": "Cantidad"})[
-        ["Material", "Unidad", "Centro", "Cantidad", "Fecha", "Semana"]
+        ["Material","Unidad","Centro","Cantidad","Fecha","Semana"]
     ]
-
     return modo_C(df_adj_pre, df_mat, capacidades, DG_code, MCH_code)
 
-
-# ----------------------------------------------------
-# E) PÁGINA COMPLETA: ÓRDENES DE FABRICACIÓN
-# ----------------------------------------------------
+# -------- PÁGINA: ÓRDENES DE FABRICACIÓN --------
 def pagina_ordenes_fabricacion():
-
     st.markdown("### 🏭 Planificación de Órdenes de Fabricación")
 
     # Validar cargas
@@ -555,7 +559,7 @@ def pagina_ordenes_fabricacion():
         st.session_state.df_cli is not None,
         st.session_state.df_dem is not None
     ]):
-        st.warning("⚠️ Primero debes cargar todos los maestros en '🗺️ Tablas maestras'.")
+        st.warning("⚠️ Primero debes cargar todos los maestros en **🗺️ Tablas maestras**.")
         return
 
     df_cap = st.session_state.df_cap
@@ -563,28 +567,27 @@ def pagina_ordenes_fabricacion():
     df_cli = st.session_state.df_cli
     df_dem = st.session_state.df_dem
 
-    # DEMANDA
+    # Demanda + semana ISO
     df_dem = df_dem.copy()
     df_dem["Fecha_DT"] = pd.to_datetime(df_dem["Fecha de necesidad"])
     iso = df_dem["Fecha_DT"].dt.isocalendar()
-    df_dem["Semana_Label"] = iso.year.astype(str) + "-W" + iso.week.astype(str).str.zfill(2)
+    # usar índices para compatibilidad de pandas
+    df_dem["Semana_Label"] = iso["year"].astype(str) + "-W" + iso["week"].astype(str).str.zfill(2)
 
-    # Detectar columna cliente
     col_cli_dem = detectar_columna_cliente(df_dem)
     col_cli_cli = detectar_columna_cliente(df_cli)
-
     if not col_cli_dem or not col_cli_cli:
-        st.error("❌ No se puede identificar la columna de cliente.")
+        st.error("❌ No se pudo identificar la columna de cliente en Demanda/Clientes.")
         return
 
-    # Unificar data
-    df = df_dem.merge(df_mat, on=["Material", "Unidad"], how="left")
+    df = df_dem.merge(df_mat, on=["Material","Unidad"], how="left")
     df = df.merge(df_cli, left_on=col_cli_dem, right_on=col_cli_cli, how="left")
 
-    # Costes
-    DG, MCH = detectar_centros(leer_capacidades(df_cap))
+    # Capacidades y centros
     capacidades = leer_capacidades(df_cap)
+    DG, MCH = detectar_centros(capacidades)
 
+    # Selección de centro por coste (si existen columnas de coste)
     col_cost_dg = next((c for c in df.columns if "cost" in c.lower() and "dg" in c.lower()), None)
     col_cost_mch = next((c for c in df.columns if "cost" in c.lower() and "mch" in c.lower()), None)
 
@@ -595,9 +598,9 @@ def pagina_ordenes_fabricacion():
 
     df["Centro_Base"] = df.apply(elegir_centro, axis=1)
 
-    # Agrupación base
+    # Agrupar para el modo C
     g = df.groupby(
-        ["Material", "Unidad", "Centro_Base", "Fecha de necesidad", "Semana_Label"],
+        ["Material","Unidad","Centro_Base","Fecha de necesidad","Semana_Label"],
         dropna=False
     ).agg({
         "Cantidad": "sum",
@@ -611,17 +614,13 @@ def pagina_ordenes_fabricacion():
         "Semana_Label": "Semana"
     })
 
-    # ====================================================
-    # EJECUTAR CÁLCULO
-    # ====================================================
     st.markdown("#### 🚀 Ejecutar planificación")
     if st.button("⚙️ Ejecutar cálculo inicial", use_container_width=True):
-
         with st.spinner("Generando planificación..."):
-
             g["Centro"] = g["Centro"].apply(norm_code)
+
             df_base = modo_C(
-                df_agr=g[["Material", "Unidad", "Centro", "Cantidad", "Fecha", "Semana"]],
+                df_agr=g[["Material","Unidad","Centro","Cantidad","Fecha","Semana"]],
                 df_mat=df_mat,
                 capacidades=capacidades,
                 DG_code=DG,
@@ -635,13 +634,10 @@ def pagina_ordenes_fabricacion():
 
         st.success("✔ Cálculo inicial completado.")
         guardar_historial("Inicial", st.session_state.usuario, df_base, DG, MCH)
-        st.info("Historial actualizado.")
+        st.info("📜 Historial actualizado.")
 
-    # ====================================================
-    # MOSTRAR RESULTADOS
-    # ====================================================
-    if "df_base" in st.session_state:
-
+    # Resultados iniciales
+    if "df_base" in st.session_state and st.session_state.df_base is not None:
         df_base = st.session_state.df_base
         DG = st.session_state.DG_calc
         MCH = st.session_state.MCH_calc
@@ -649,43 +645,33 @@ def pagina_ordenes_fabricacion():
         st.markdown("---")
         st.markdown("### 📊 Resultados del cálculo inicial")
 
-        c = st.columns(3)
-        c[0].metric("Total propuestas", f"{len(df_base):,}")
-        c[1].metric(f"Horas {DG}", f"{df_base[df_base['Centro']==DG]['Horas'].sum():,.1f}h")
-        c[2].metric(f"Horas {MCH}", f"{df_base[df_base['Centro']==MCH]['Horas'].sum():,.1f}h")
+        m = st.columns(3)
+        m[0].metric("Total propuestas", f"{len(df_base):,}")
+        m[1].metric(f"Horas {DG}", f"{df_base[df_base['Centro']==DG]['Horas'].sum():,.1f}h")
+        m[2].metric(f"Horas {MCH}", f"{df_base[df_base['Centro']==MCH]['Horas'].sum():,.1f}h")
 
         st.markdown("#### 📈 Gráfico semanal")
-
-        df_plot = df_base.copy()
-        df_plot["Semana"] = df_plot["Semana"].astype(str)
-        df_plot["Centro"] = df_plot["Centro"].astype(str)
-
-        carga = (
-            df_plot.groupby(["Semana","Centro"])["Horas"]
-            .sum().unstack().fillna(0)
-        )
-
-        st.bar_chart(carga)
-        st.dataframe(carga.style.format("{:,.1f}"))
+        dfp = df_base.copy()
+        dfp["Semana"] = dfp["Semana"].astype(str)
+        dfp["Centro"] = dfp["Centro"].astype(str)
+        carga = dfp.groupby(["Semana","Centro"])["Horas"].sum().unstack().fillna(0).sort_index()
+        st.bar_chart(carga, use_container_width=True)
+        st.dataframe(carga.style.format("{:,.1f}"), use_container_width=True)
 
         st.markdown("#### 📝 Detalle de propuestas")
-        st.dataframe(df_base)
+        st.dataframe(df_base, use_container_width=True)
 
-        # DESCARGA
         path_ini = os.path.join(UPLOAD_DIR, f"Propuesta_Inicial_{datetime.now().strftime('%Y%m%d')}.xlsx")
         df_base.to_excel(path_ini, index=False)
-        with open(path_ini, "rb") as f:
-            st.download_button("📥 Descargar Excel inicial", data=f, file_name="Propuesta_Inicial.xlsx")
+        with st.expander("📥 Descargar Excel"):
+            with open(path_ini, "rb") as f:
+                st.download_button("Descargar Propuesta Inicial", data=f, file_name="Propuesta_Inicial.xlsx")
 
-        # ====================================================
-        # AJUSTE SEMANAL
-        # ====================================================
+        # Ajuste semanal
         st.markdown("---")
-        st.markdown("### 🎛️ Ajuste por semana (DG/MCH)")
-
+        st.markdown("### 🎛️ Ajuste por semana (0% MCH · 100% DG)")
         semanas = sorted(df_base["Semana"].astype(str).unique())
         ajustes = {}
-
         cols = st.columns(4)
         for i, sem in enumerate(semanas):
             with cols[i % 4]:
@@ -704,54 +690,44 @@ def pagina_ordenes_fabricacion():
                 st.session_state.df_replan = df_final
 
             guardar_historial("Reajustado", st.session_state.usuario, df_final, DG, MCH)
-            st.success("✔ Replanificación completa")
-            st.info("Historial actualizado.")
+            st.success("✔ Replanificación completada.")
+            st.info("📜 Historial actualizado.")
 
-    # ====================================================
-    # RESULTADOS REPLANIFICADOS
-    # ====================================================
-    if "df_replan" in st.session_state:
+    # Resultados replanificados
+    if "df_replan" in st.session_state and st.session_state.df_replan is not None:
         df_final = st.session_state.df_replan
-
         st.markdown("---")
         st.markdown("### 📈 Resultados tras replanificación")
 
-        c = st.columns(3)
-        c[0].metric("Total propuestas", f"{len(df_final):,}")
-        c[1].metric(f"Horas {DG}", f"{df_final[df_final['Centro']==DG]['Horas'].sum():,.1f}h")
-        c[2].metric(f"Horas {MCH}", f"{df_final[df_final['Centro']==MCH]['Horas'].sum():,.1f}h")
+        DG = st.session_state.DG_calc
+        MCH = st.session_state.MCH_calc
 
-        dfp = df_final.copy()
-        dfp["Semana"] = dfp["Semana"].astype(str)
-        dfp["Centro"] = dfp["Centro"].astype(str)
+        m2 = st.columns(3)
+        m2[0].metric("Total propuestas", f"{len(df_final):,}")
+        m2[1].metric(f"Horas {DG}", f"{df_final[df_final['Centro']==DG]['Horas'].sum():,.1f}h")
+        m2[2].metric(f"Horas {MCH}", f"{df_final[df_final['Centro']==MCH]['Horas'].sum():,.1f}h")
 
-        carga2 = (
-            dfp.groupby(["Semana","Centro"])["Horas"]
-            .sum().unstack().fillna(0)
-        )
-
-        st.bar_chart(carga2)
-        st.dataframe(carga2.style.format("{:,.1f}"))
+        dfp2 = df_final.copy()
+        dfp2["Semana"] = dfp2["Semana"].astype(str)
+        dfp2["Centro"] = dfp2["Centro"].astype(str)
+        carga2 = dfp2.groupby(["Semana","Centro"])["Horas"].sum().unstack().fillna(0).sort_index()
+        st.bar_chart(carga2, use_container_width=True)
+        st.dataframe(carga2.style.format("{:,.1f}"), use_container_width=True)
 
         st.markdown("#### 📝 Detalle final")
-        st.dataframe(df_final)
+        st.dataframe(df_final, use_container_width=True)
 
-        path_final = os.path.join(UPLOAD_DIR, f"Propuesta_Replanificada_{datetime.now().strftime('%Y%m%d')}.xlsx")
-        df_final.to_excel(path_final, index=False)
-
-        with open(path_final, "rb") as f:
-            st.download_button("📥 Descargar Excel replanificado", data=f, file_name="Propuesta_Replanificada.xlsx")
-
-
-# -------- INTEGRACIÓN EN ROUTER --------
-if page == "Órdenes de fabricación":
-    pagina_ordenes_fabricacion()
-# ================================
+        path_fin = os.path.join(UPLOAD_DIR, f"Propuesta_Replanificada_{datetime.now().strftime('%Y%m%d')}.xlsx")
+        df_final.to_excel(path_fin, index=False)
+        with st.expander("📥 Descargar Excel"):
+            with open(path_fin, "rb") as f:
+                st.download_button("Descargar Propuesta Replanificada", data=f, file_name="Propuesta_Replanificada.xlsx")
+                # ================================
 # PROYECTO‑X — BLOQUE 4/4
 # Router final + Footer
 # ================================
 
-# ========== ROUTER DEFINITIVO ==========
+# ---------- ROUTER DEFINITIVO ----------
 if page == "Tablas maestras":
     pagina_tablas_maestras()
 
@@ -773,7 +749,7 @@ elif page == "Historial":
 elif page == "Administración":
     st.info("⚙️ Pantalla de administración (pendiente).")
 
-# ========== FOOTER CORPORATIVO ==========
+# ---------- FOOTER CORPORATIVO ----------
 st.markdown("---")
 st.markdown(
     """
